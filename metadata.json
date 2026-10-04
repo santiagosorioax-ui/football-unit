@@ -1,0 +1,6 @@
+{
+  "name": "Football Unit",
+  "description": "Un emocionante juego de fútbol individual para jugar contra la IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
