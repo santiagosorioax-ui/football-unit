@@ -31,7 +31,8 @@ const INITIAL_MESSAGES: MailboxMessage[] = [
 ];
 
 export default function App() {
-  const [screen, setScreen] = useState<AppScreen>('home');
+  const [screen, setScreen] = useState<AppScreen>('loading');
+  const [loadingDestination, setLoadingDestination] = useState<AppScreen>('home');
   const [isMailboxOpen, setIsMailboxOpen] = useState(false);
   const [isShopOpen, setIsShopOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -178,15 +179,12 @@ export default function App() {
 
   return (
     <main className="w-screen h-screen overflow-hidden bg-black select-none">
-      {/* 1. Loading Screen (20s duration) */}
+      {/* 1. Loading Screen (Pantalla de Carga) */}
       {screen === 'loading' && (
         <LoadingScreen
-          durationSeconds={20}
+          durationSeconds={loadingDestination === 'home' ? 8 : 4}
           onComplete={() => {
-            try {
-              sessionStorage.setItem('fu_visited', 'true');
-            } catch {}
-            setScreen('home');
+            setScreen(loadingDestination);
           }}
         />
       )}
@@ -194,8 +192,13 @@ export default function App() {
       {/* 2. Home Screen (Pantalla de Inicio matching the video) */}
       {screen === 'home' && (
         <HomeScreen
+          team={team}
+          coins={coins}
           unreadMailCount={unreadMailCount}
-          onPlay={() => setScreen('match')}
+          onPlay={() => {
+            setLoadingDestination('match');
+            setScreen('loading');
+          }}
           onOpenTeam={() => setScreen('team')}
           onOpenShop={() => setIsShopOpen(true)}
           onOpenMailbox={() => setIsMailboxOpen(true)}
@@ -215,7 +218,10 @@ export default function App() {
       {screen === 'match' && (
         <FootballGame
           team={team}
-          onShowLoading={() => setScreen('loading')}
+          onShowLoading={() => {
+            setLoadingDestination('home');
+            setScreen('loading');
+          }}
           onExitToMenu={handleExitMatch}
           onMatchComplete={handleMatchComplete}
         />

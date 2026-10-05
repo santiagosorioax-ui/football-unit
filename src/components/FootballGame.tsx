@@ -137,6 +137,11 @@ export default function FootballGame({
   const virtualInputRef = useRef<{ x: number; z: number }>({ x: 0, z: 0 });
   const [joystickThumb, setJoystickThumb] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  // Mouse Aim & Charge Power Bar Refs
+  const powerBarContainerRef = useRef<HTMLDivElement>(null);
+  const powerBarFillRef = useRef<HTMLDivElement>(null);
+  const powerBarLabelRef = useRef<HTMLSpanElement>(null);
+
   // Action Triggers Ref
   const actionTriggersRef = useRef({
     kick: false,
@@ -218,16 +223,16 @@ export default function FootballGame({
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
 
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
     // --- Stadium Lighting ---
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.95);
     scene.add(ambientLight);
 
-    const sunLight = new THREE.DirectionalLight(0xfffaed, 1.3);
+    const sunLight = new THREE.DirectionalLight(0xfffaed, 1.4);
     sunLight.position.set(70, 95, 55);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.width = 2048;
@@ -240,6 +245,31 @@ export default function FootballGame({
     sunLight.shadow.camera.bottom = -90;
     sunLight.shadow.bias = -0.0005;
     scene.add(sunLight);
+
+    // Dedicated Grandstand & Crowd Illumination (Bathing all spectator stands in bright arena light)
+    const standLightN = new THREE.DirectionalLight(0xfffaed, 0.9);
+    standLightN.position.set(0, 45, -35);
+    standLightN.target.position.set(0, 4, -98);
+    scene.add(standLightN.target);
+    scene.add(standLightN);
+
+    const standLightS = new THREE.DirectionalLight(0xfffaed, 0.9);
+    standLightS.position.set(0, 45, 35);
+    standLightS.target.position.set(0, 4, 98);
+    scene.add(standLightS.target);
+    scene.add(standLightS);
+
+    const standLightE = new THREE.DirectionalLight(0xfffaed, 0.85);
+    standLightE.position.set(25, 45, 0);
+    standLightE.target.position.set(65, 4, 0);
+    scene.add(standLightE.target);
+    scene.add(standLightE);
+
+    const standLightW = new THREE.DirectionalLight(0xfffaed, 0.85);
+    standLightW.position.set(-25, 45, 0);
+    standLightW.target.position.set(-65, 4, 0);
+    scene.add(standLightW.target);
+    scene.add(standLightW);
 
     // Corner Floodlight Towers (placed outside 175m x 110m pitch)
     const createFloodlightTower = (x: number, z: number, targetX: number, targetZ: number) => {
@@ -328,18 +358,18 @@ export default function FootballGame({
     centerSpot.position.set(0, 0.02, 0);
     markingsGroup.add(centerSpot);
 
-    // Penalty Areas (22m x 52m) and Goal Areas (7m x 24m)
+    // Penalty Areas (24m x 60m) and Goal Areas (8m x 38m)
     const createPenaltyArea = (zCenter: number, isNorth: boolean) => {
-      const boxW = 52;
-      const boxL = 22;
+      const boxW = 60;
+      const boxL = 24;
       const frontZ = isNorth ? zCenter + boxL : zCenter - boxL;
 
       createLine(boxW, 0.28, 0, frontZ);
       createLine(boxL, 0.28, -boxW / 2, isNorth ? zCenter + boxL / 2 : zCenter - boxL / 2, Math.PI / 2);
       createLine(boxL, 0.28, boxW / 2, isNorth ? zCenter + boxL / 2 : zCenter - boxL / 2, Math.PI / 2);
 
-      const smallW = 24;
-      const smallL = 7;
+      const smallW = 38;
+      const smallL = 8;
       const smallFrontZ = isNorth ? zCenter + smallL : zCenter - smallL;
       createLine(smallW, 0.28, 0, smallFrontZ);
       createLine(smallL, 0.28, -smallW / 2, isNorth ? zCenter + smallL / 2 : zCenter - smallL / 2, Math.PI / 2);
@@ -372,20 +402,20 @@ export default function FootballGame({
 
     scene.add(markingsGroup);
 
-    // --- Goals / Porterías (16m x 4.8m) ---
+    // --- Goals / Porterías Monumentales y Más Grandes (32m x 7.8m) ---
     function createGoal(zPos: number, isNorth: boolean) {
       const goalGroup = new THREE.Group();
       const postMaterial = new THREE.MeshStandardMaterial({
         color: 0xffffff,
-        roughness: 0.2,
-        metalness: 0.6,
+        roughness: 0.15,
+        metalness: 0.65,
       });
 
-      const goalW = 16;
-      const goalH = 4.8;
+      const goalW = 32.0;
+      const goalH = 7.8;
 
-      const postGeom = new THREE.CylinderGeometry(0.24, 0.24, goalH, 16);
-      const crossbarGeom = new THREE.CylinderGeometry(0.24, 0.24, goalW, 16);
+      const postGeom = new THREE.CylinderGeometry(0.32, 0.32, goalH, 16);
+      const crossbarGeom = new THREE.CylinderGeometry(0.32, 0.32, goalW, 16);
 
       const leftPost = new THREE.Mesh(postGeom, postMaterial);
       leftPost.position.set(-goalW / 2, goalH / 2, 0);
@@ -402,26 +432,35 @@ export default function FootballGame({
 
       goalGroup.add(leftPost, rightPost, crossbar);
 
-      // Net
-      const netDepth = 4.5;
+      // Net (Back, Top and Sides)
+      const netDepth = 6.8;
       const netMat = new THREE.MeshBasicMaterial({
-        color: 0xe2e8f0,
+        color: 0xf8fafc,
         wireframe: true,
         transparent: true,
-        opacity: 0.38,
+        opacity: 0.42,
       });
 
-      const netBackGeom = new THREE.PlaneGeometry(goalW, goalH, 12, 4);
+      const netBackGeom = new THREE.PlaneGeometry(goalW, goalH, 18, 8);
       const netBack = new THREE.Mesh(netBackGeom, netMat);
       netBack.position.set(0, goalH / 2, isNorth ? -netDepth : netDepth);
       if (!isNorth) netBack.rotation.y = Math.PI;
 
-      const netTopGeom = new THREE.PlaneGeometry(goalW, netDepth, 12, 3);
+      const netTopGeom = new THREE.PlaneGeometry(goalW, netDepth, 18, 6);
       const netTop = new THREE.Mesh(netTopGeom, netMat);
       netTop.rotation.x = Math.PI / 2;
       netTop.position.set(0, goalH, isNorth ? -netDepth / 2 : netDepth / 2);
 
-      goalGroup.add(netBack, netTop);
+      const netSideGeom = new THREE.PlaneGeometry(netDepth, goalH, 6, 8);
+      const netLeft = new THREE.Mesh(netSideGeom, netMat);
+      netLeft.rotation.y = Math.PI / 2;
+      netLeft.position.set(-goalW / 2, goalH / 2, isNorth ? -netDepth / 2 : netDepth / 2);
+
+      const netRight = new THREE.Mesh(netSideGeom, netMat);
+      netRight.rotation.y = Math.PI / 2;
+      netRight.position.set(goalW / 2, goalH / 2, isNorth ? -netDepth / 2 : netDepth / 2);
+
+      goalGroup.add(netBack, netTop, netLeft, netRight);
       goalGroup.position.z = zPos;
       scene.add(goalGroup);
     }
@@ -450,21 +489,147 @@ export default function FootballGame({
     createBoard(32, 1.2, -30, fieldLength / 2 + 2);
     createBoard(32, 1.2, 30, fieldLength / 2 + 2);
 
-    const standGeom = new THREE.BoxGeometry(fieldWidth + 44, 16, 22);
-    const standMat = new THREE.MeshStandardMaterial({ color: 0x1e293b });
-    const northStand = new THREE.Mesh(standGeom, standMat);
-    northStand.position.set(0, 8, -fieldLength / 2 - 18);
-    const southStand = new THREE.Mesh(standGeom, standMat);
-    southStand.position.set(0, 8, fieldLength / 2 + 18);
-    stadiumGroup.add(northStand, southStand);
+    // --- AUTHENTIC STEPPED STADIUM BOWL & VIBRANT HUMAN CROWD ---
+    const stepConcreteMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.6, metalness: 0.1 });
+    const backWallMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7, metalness: 0.3 });
+    const canopyRoofMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.4, roughness: 0.4 });
+    const blueSeatMat = new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.5 });
+    const redSeatMat = new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.5 });
+    const yellowSeatMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.5 });
+    const seatColorList = [blueSeatMat, redSeatMat, yellowSeatMat];
 
-    // Lateral East Stand
-    const eastStandGeom = new THREE.BoxGeometry(22, 14, fieldLength + 36);
-    const eastStand = new THREE.Mesh(eastStandGeom, standMat);
-    eastStand.position.set(fieldWidth / 2 + 18, 7, 0);
-    stadiumGroup.add(eastStand);
+    // Helper to add a stepped grandstand tier with seats
+    const createBleacherTier = (
+      w: number,
+      d: number,
+      x: number,
+      y: number,
+      z: number,
+      seatMat: THREE.Material,
+      rotY: number = 0
+    ) => {
+      // Concrete riser step
+      const stepG = new THREE.BoxGeometry(w, 0.6, d);
+      const stepMesh = new THREE.Mesh(stepG, stepConcreteMat);
+      stepMesh.position.set(x, y - 0.3, z);
+      stepMesh.rotation.y = rotY;
+      stepMesh.receiveShadow = true;
+      stadiumGroup.add(stepMesh);
 
-    // --- ANIMATED 3D SPECTATORS (Aficionados saltando y viendo el partido con brazos) ---
+      // Stadium seats along the back of the step
+      const seatBackG = new THREE.BoxGeometry(w * 0.96, 0.4, 0.1);
+      const seatMesh = new THREE.Mesh(seatBackG, seatMat);
+      seatMesh.position.set(x, y + 0.2, z);
+      seatMesh.rotation.y = rotY;
+      stadiumGroup.add(seatMesh);
+    };
+
+    // 1. TRIBUNA FONDO NORTE (North Stand - 4 Stepped Tiers + Wall + Scoreboard + Roof)
+    for (let r = 0; r < 4; r++) {
+      const stepZ = -fieldLength / 2 - 5.5 - r * 2.8;
+      const stepY = 0.8 + r * 1.4;
+      createBleacherTier(fieldWidth + 24, 2.6, 0, stepY, stepZ, seatColorList[r % seatColorList.length]);
+    }
+    // North Back Wall & Exterior (behind the highest tier)
+    const northWallG = new THREE.BoxGeometry(fieldWidth + 30, 11, 2.5);
+    const northWall = new THREE.Mesh(northWallG, backWallMat);
+    northWall.position.set(0, 6.0, -fieldLength / 2 - 17.5);
+    stadiumGroup.add(northWall);
+
+    // North Roof Canopy (hovering high overhead)
+    const northRoofG = new THREE.BoxGeometry(fieldWidth + 36, 1.2, 22);
+    const northRoof = new THREE.Mesh(northRoofG, canopyRoofMat);
+    northRoof.position.set(0, 17.5, -fieldLength / 2 - 8);
+    northRoof.rotation.x = 0.08;
+    stadiumGroup.add(northRoof);
+
+    // Giant North Scoreboard
+    const jumbotronGeom = new THREE.BoxGeometry(26, 7.0, 1.2);
+    const jumbotronScreenMat = new THREE.MeshBasicMaterial({ color: 0x0284c7 });
+    const jumbotronNorth = new THREE.Mesh(jumbotronGeom, jumbotronScreenMat);
+    jumbotronNorth.position.set(0, 12.0, -fieldLength / 2 - 16.5);
+    stadiumGroup.add(jumbotronNorth);
+
+    // 2. TRIBUNA FONDO SUR (South Stand - 4 Stepped Tiers + Wall + Scoreboard + Roof)
+    for (let r = 0; r < 4; r++) {
+      const stepZ = fieldLength / 2 + 5.5 + r * 2.8;
+      const stepY = 0.8 + r * 1.4;
+      createBleacherTier(fieldWidth + 24, 2.6, 0, stepY, stepZ, seatColorList[r % seatColorList.length]);
+    }
+    const southWallG = new THREE.BoxGeometry(fieldWidth + 30, 11, 2.5);
+    const southWall = new THREE.Mesh(southWallG, backWallMat);
+    southWall.position.set(0, 6.0, fieldLength / 2 + 17.5);
+    stadiumGroup.add(southWall);
+
+    const southRoofG = new THREE.BoxGeometry(fieldWidth + 36, 1.2, 22);
+    const southRoof = new THREE.Mesh(southRoofG, canopyRoofMat);
+    southRoof.position.set(0, 17.5, fieldLength / 2 + 8);
+    southRoof.rotation.x = -0.08;
+    stadiumGroup.add(southRoof);
+
+    const jumbotronSouth = new THREE.Mesh(jumbotronGeom, jumbotronScreenMat);
+    jumbotronSouth.position.set(0, 12.0, fieldLength / 2 + 16.5);
+    stadiumGroup.add(jumbotronSouth);
+
+    // 3. TRIBUNA LATERAL ORIENTE (East Stand - 4 Stepped Tiers + Wall + Roof)
+    for (let r = 0; r < 4; r++) {
+      const stepX = fieldWidth / 2 + 5.5 + r * 2.8;
+      const stepY = 0.8 + r * 1.4;
+      createBleacherTier(2.6, fieldLength + 18, stepX, stepY, 0, seatColorList[r % seatColorList.length]);
+    }
+    const eastWallG = new THREE.BoxGeometry(2.5, 11, fieldLength + 24);
+    const eastWall = new THREE.Mesh(eastWallG, backWallMat);
+    eastWall.position.set(fieldWidth / 2 + 17.5, 6.0, 0);
+    stadiumGroup.add(eastWall);
+
+    const eastRoofG = new THREE.BoxGeometry(22, 1.2, fieldLength + 30);
+    const eastRoof = new THREE.Mesh(eastRoofG, canopyRoofMat);
+    eastRoof.position.set(fieldWidth / 2 + 8, 17.5, 0);
+    eastRoof.rotation.z = -0.08;
+    stadiumGroup.add(eastRoof);
+
+    // 4. TRIBUNA LATERAL PONIENTE (West Stand - North wing, South wing, Bridge tier over tunnel)
+    const westWingLength = (fieldLength - 36) / 2;
+    for (let r = 0; r < 4; r++) {
+      const stepX = -fieldWidth / 2 - 5.5 - r * 2.8;
+      const stepY = 0.8 + r * 1.4;
+      // North wing steps
+      createBleacherTier(2.6, westWingLength, stepX, stepY, -fieldLength / 4 - 9, seatColorList[r % seatColorList.length]);
+      // South wing steps
+      createBleacherTier(2.6, westWingLength, stepX, stepY, fieldLength / 4 + 9, seatColorList[r % seatColorList.length]);
+    }
+    // Upper VIP Bridge over Tunnel
+    createBleacherTier(2.8, 32, -fieldWidth / 2 - 13.5, 6.5, 0, blueSeatMat);
+
+    const westWallG = new THREE.BoxGeometry(2.5, 11, fieldLength + 24);
+    const westWall = new THREE.Mesh(westWallG, backWallMat);
+    westWall.position.set(-fieldWidth / 2 - 17.5, 6.0, 0);
+    stadiumGroup.add(westWall);
+
+    const westRoofG = new THREE.BoxGeometry(22, 1.2, fieldLength + 30);
+    const westRoof = new THREE.Mesh(westRoofG, canopyRoofMat);
+    westRoof.position.set(-fieldWidth / 2 - 8, 17.5, 0);
+    westRoof.rotation.z = 0.08;
+    stadiumGroup.add(westRoof);
+
+    // 5. FOUR CORNER GRANDSTANDS (Esquinas escalonadas)
+    const cornerSpawns = [
+      { x: -fieldWidth / 2 - 10, z: -fieldLength / 2 - 10, rot: Math.PI / 4 },
+      { x: fieldWidth / 2 + 10, z: -fieldLength / 2 - 10, rot: -Math.PI / 4 },
+      { x: -fieldWidth / 2 - 10, z: fieldLength / 2 + 10, rot: (3 * Math.PI) / 4 },
+      { x: fieldWidth / 2 + 10, z: fieldLength / 2 + 10, rot: (-3 * Math.PI) / 4 },
+    ];
+    cornerSpawns.forEach((corner) => {
+      for (let r = 0; r < 3; r++) {
+        const dist = 3.5 + r * 2.6;
+        const cx = corner.x + Math.sin(corner.rot) * dist;
+        const cz = corner.z + Math.cos(corner.rot) * dist;
+        const cy = 0.8 + r * 1.4;
+        createBleacherTier(18, 2.4, cx, cy, cz, seatColorList[r % seatColorList.length], corner.rot);
+      }
+    });
+
+    // --- ANIMATED 3D SPECTATORS & DYNAMIC CAMERA FLASHES ---
     interface SpectatorEntity {
       group: THREE.Group;
       leftArm: THREE.Mesh;
@@ -472,65 +637,236 @@ export default function FootballGame({
       baseY: number;
       phase: number;
       speed: number;
+      isTakingPhoto: boolean;
     }
     const spectators: SpectatorEntity[] = [];
 
-    const fanBodyGeom = new THREE.CylinderGeometry(0.32, 0.28, 0.8, 8);
-    const fanHeadGeom = new THREE.SphereGeometry(0.24, 8, 8);
-    const fanArmGeom = new THREE.CylinderGeometry(0.08, 0.08, 0.5, 6);
-    const fanColors = [0x2563eb, 0xdc2626, 0xffffff, 0xfacc15, 0x10b981, 0x9333ea, 0x0284c7];
-    const fanMats = fanColors.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.5 }));
-    const skinFanMat = new THREE.MeshStandardMaterial({ color: 0xe0ac69, roughness: 0.6 });
+    interface CameraFlashEntity {
+      mesh: THREE.Mesh;
+      activeTimer: number;
+      duration: number;
+      nextFlashIn: number;
+      baseScale: number;
+    }
+    const cameraFlashes: CameraFlashEntity[] = [];
 
-    const createSpectator = (x: number, y: number, z: number, phase: number, speed: number) => {
+    // Detailed Human Spectator Geometries
+    const fanLegGeom = new THREE.CylinderGeometry(0.08, 0.08, 0.55, 6);
+    const fanTorsoGeom = new THREE.CylinderGeometry(0.32, 0.28, 0.72, 8);
+    const fanHeadGeom = new THREE.SphereGeometry(0.22, 8, 8);
+    const fanCapGeom = new THREE.CylinderGeometry(0.24, 0.24, 0.12, 8);
+    const fanArmGeom = new THREE.CylinderGeometry(0.075, 0.075, 0.5, 6);
+    const scarfGeom = new THREE.BoxGeometry(0.85, 0.14, 0.04);
+    const phoneGeom = new THREE.BoxGeometry(0.1, 0.18, 0.03);
+    const phoneScreenGeom = new THREE.PlaneGeometry(0.08, 0.14);
+    const lensGeom = new THREE.CircleGeometry(0.025, 8);
+    const flashGeom = new THREE.SphereGeometry(0.42, 8, 8);
+
+    // Materials
+    const pantsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.6 });
+    const phoneBodyMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9, roughness: 0.1 });
+    const phoneScreenMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+    const lensMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const flashMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 });
+
+    const skinTones = [0xfcd34d, 0xe0ac69, 0xc68642, 0x8d5524];
+    const skinMats = skinTones.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }));
+
+    const fanColors = [0x2563eb, 0xdc2626, 0xfacc15, 0x10b981, 0xffffff, 0x0284c7, 0xf97316, 0x8b5cf6];
+    const fanMats = fanColors.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.5 }));
+    const capMats = [0x1e3a8a, 0x991b1b, 0x0f172a, 0xb45309, 0xfacc15].map(
+      (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 })
+    );
+
+    const scarfMats = [
+      new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.6 }),
+      new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.6 }),
+      new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.6 }),
+    ];
+
+    // Function to assemble an authentic humanoid spectator (persona aficionada)
+    const createSpectator = (
+      x: number,
+      y: number,
+      z: number,
+      phase: number,
+      speed: number,
+      isTakingPhoto: boolean,
+      facingY: number = 0
+    ) => {
       const g = new THREE.Group();
       g.position.set(x, y, z);
+      g.rotation.y = facingY;
 
-      const mat = fanMats[Math.floor(Math.random() * fanMats.length)];
-      const body = new THREE.Mesh(fanBodyGeom, mat);
-      body.position.y = 0.4;
+      const jerseyMat = fanMats[Math.floor(Math.random() * fanMats.length)];
+      const skinMat = skinMats[Math.floor(Math.random() * skinMats.length)];
+      const capMat = capMats[Math.floor(Math.random() * capMats.length)];
+
+      // Two Legs
+      const leftLeg = new THREE.Mesh(fanLegGeom, pantsMat);
+      leftLeg.position.set(-0.14, 0.28, 0);
+      const rightLeg = new THREE.Mesh(fanLegGeom, pantsMat);
+      rightLeg.position.set(0.14, 0.28, 0);
+      g.add(leftLeg, rightLeg);
+
+      // Torso with colorful team jersey
+      const body = new THREE.Mesh(fanTorsoGeom, jerseyMat);
+      body.position.y = 0.92;
       g.add(body);
 
-      const head = new THREE.Mesh(fanHeadGeom, skinFanMat);
-      head.position.y = 0.95;
+      // Head with skin tone
+      const head = new THREE.Mesh(fanHeadGeom, skinMat);
+      head.position.y = 1.45;
       g.add(head);
 
-      const leftArm = new THREE.Mesh(fanArmGeom, mat);
-      leftArm.position.set(-0.35, 0.6, 0);
-      g.add(leftArm);
+      // Team Cap / Hair
+      const cap = new THREE.Mesh(fanCapGeom, capMat);
+      cap.position.set(0, 1.58, 0.02);
+      g.add(cap);
 
-      const rightArm = new THREE.Mesh(fanArmGeom, mat);
-      rightArm.position.set(0.35, 0.6, 0);
+      // Arms
+      const leftArm = new THREE.Mesh(fanArmGeom, jerseyMat);
+      const rightArm = new THREE.Mesh(fanArmGeom, jerseyMat);
+
+      if (isTakingPhoto) {
+        // Holding smartphone taking photos of the pitch!
+        leftArm.position.set(-0.25, 1.15, 0.22);
+        leftArm.rotation.x = -1.25;
+        leftArm.rotation.z = 0.3;
+
+        rightArm.position.set(0.25, 1.15, 0.22);
+        rightArm.rotation.x = -1.35;
+        rightArm.rotation.z = -0.22;
+
+        const phone = new THREE.Mesh(phoneGeom, phoneBodyMat);
+        phone.position.set(0, 0.24, 0.04);
+        phone.rotation.x = 0.2;
+
+        // Glowing screen facing spectator
+        const screen = new THREE.Mesh(phoneScreenGeom, phoneScreenMat);
+        screen.position.set(0, 0, 0.016);
+        screen.rotation.y = Math.PI;
+        phone.add(screen);
+
+        // Camera lens facing field
+        const lens = new THREE.Mesh(lensGeom, lensMat);
+        lens.position.set(0, 0.05, -0.016);
+        phone.add(lens);
+        rightArm.add(phone);
+
+        // Flash Burst Sprite positioned directly in front of the camera lens
+        const flashMesh = new THREE.Mesh(flashGeom, flashMat.clone());
+        flashMesh.position.set(x, y + 1.45, z);
+        flashMesh.visible = false;
+        stadiumGroup.add(flashMesh);
+
+        cameraFlashes.push({
+          mesh: flashMesh,
+          activeTimer: 0,
+          duration: 0.12,
+          nextFlashIn: 0.2 + Math.random() * 3.0,
+          baseScale: 0.9 + Math.random() * 0.7,
+        });
+      } else {
+        // Cheering fan: arms raised high, pumping fists or waving scarves
+        const hasScarf = Math.random() < 0.45;
+        if (hasScarf) {
+          leftArm.position.set(-0.35, 1.35, 0);
+          leftArm.rotation.z = 0.75;
+          rightArm.position.set(0.35, 1.35, 0);
+          rightArm.rotation.z = -0.75;
+
+          const scarf = new THREE.Mesh(scarfGeom, scarfMats[Math.floor(Math.random() * scarfMats.length)]);
+          scarf.position.set(0, 1.85, 0);
+          g.add(scarf);
+        } else {
+          leftArm.position.set(-0.35, 1.25, 0);
+          leftArm.rotation.z = 0.6;
+          rightArm.position.set(0.35, 1.25, 0);
+          rightArm.rotation.z = -0.6;
+        }
+      }
+
+      g.add(leftArm);
       g.add(rightArm);
 
       stadiumGroup.add(g);
-      spectators.push({ group: g, leftArm, rightArm, baseY: y, phase, speed });
+      spectators.push({ group: g, leftArm, rightArm, baseY: y, phase, speed, isTakingPhoto });
     };
 
-    // North Stand fans (tribuna norte)
-    for (let row = 0; row < 3; row++) {
-      for (let col = -46; col <= 46; col += 3.2) {
-        const y = 9.5 + row * 2.4;
-        const z = -fieldLength / 2 - 14 - row * 2.6;
-        createSpectator(col, y, z, col * 0.25 + row, 4 + Math.random() * 2.5);
+    // 1. POPULATE TRIBUNA FONDO NORTE (North Stand Crowd)
+    for (let r = 0; r < 4; r++) {
+      const rowZ = -fieldLength / 2 - 5.5 - r * 2.8;
+      const rowY = 0.8 + r * 1.4;
+      for (let col = -46; col <= 46; col += 2.4) {
+        const isPhoto = Math.random() < 0.42;
+        createSpectator(col, rowY, rowZ, col * 0.3 + r, 4 + Math.random() * 2.5, isPhoto, 0);
       }
     }
-    // South Stand fans (tribuna sur)
-    for (let row = 0; row < 3; row++) {
-      for (let col = -46; col <= 46; col += 3.2) {
-        const y = 9.5 + row * 2.4;
-        const z = fieldLength / 2 + 14 + row * 2.6;
-        createSpectator(col, y, z, col * 0.25 + row, 4 + Math.random() * 2.5);
+
+    // 2. POPULATE TRIBUNA FONDO SUR (South Stand Crowd)
+    for (let r = 0; r < 4; r++) {
+      const rowZ = fieldLength / 2 + 5.5 + r * 2.8;
+      const rowY = 0.8 + r * 1.4;
+      for (let col = -46; col <= 46; col += 2.4) {
+        const isPhoto = Math.random() < 0.42;
+        createSpectator(col, rowY, rowZ, col * 0.3 + r, 4 + Math.random() * 2.5, isPhoto, Math.PI);
       }
     }
-    // Lateral East Stand fans (tribuna oriente)
-    for (let row = 0; row < 3; row++) {
-      for (let zCol = -70; zCol <= 70; zCol += 3.6) {
-        const y = 8.5 + row * 2.2;
-        const x = fieldWidth / 2 + 12 + row * 2.6;
-        createSpectator(x, y, zCol, zCol * 0.2 + row, 4 + Math.random() * 2.5);
+
+    // 3. POPULATE TRIBUNA LATERAL ORIENTE (East Stand Crowd)
+    for (let r = 0; r < 4; r++) {
+      const rowX = fieldWidth / 2 + 5.5 + r * 2.8;
+      const rowY = 0.8 + r * 1.4;
+      for (let zCol = -74; zCol <= 74; zCol += 2.8) {
+        const isPhoto = Math.random() < 0.42;
+        createSpectator(rowX, rowY, zCol, zCol * 0.25 + r, 4 + Math.random() * 2.5, isPhoto, -Math.PI / 2);
       }
     }
+
+    // 4. POPULATE TRIBUNA LATERAL PONIENTE (West Stand Crowd)
+    for (let r = 0; r < 4; r++) {
+      const rowX = -fieldWidth / 2 - 5.5 - r * 2.8;
+      const rowY = 0.8 + r * 1.4;
+      // North wing
+      for (let zCol = -74; zCol <= -16; zCol += 2.8) {
+        const isPhoto = Math.random() < 0.42;
+        createSpectator(rowX, rowY, zCol, zCol * 0.25 + r, 4 + Math.random() * 2.5, isPhoto, Math.PI / 2);
+      }
+      // South wing
+      for (let zCol = 16; zCol <= 74; zCol += 2.8) {
+        const isPhoto = Math.random() < 0.42;
+        createSpectator(rowX, rowY, zCol, zCol * 0.25 + r, 4 + Math.random() * 2.5, isPhoto, Math.PI / 2);
+      }
+    }
+    // Upper Bridge Crowd above Tunnel
+    for (let zCol = -12; zCol <= 12; zCol += 2.8) {
+      const isPhoto = Math.random() < 0.5;
+      createSpectator(-fieldWidth / 2 - 13.5, 6.5, zCol, zCol * 0.4, 4.2, isPhoto, Math.PI / 2);
+    }
+
+    // 5. POPULATE FOUR CORNER STANDS (Esquinas)
+    cornerSpawns.forEach((corner, cIdx) => {
+      for (let r = 0; r < 3; r++) {
+        const dist = 3.5 + r * 2.6;
+        const cy = 0.8 + r * 1.4;
+        for (let i = -3; i <= 3; i++) {
+          const offset = i * 2.2;
+          const perpX = Math.cos(corner.rot) * offset + Math.sin(corner.rot) * dist;
+          const perpZ = -Math.sin(corner.rot) * offset + Math.cos(corner.rot) * dist;
+          const isPhoto = Math.random() < 0.4;
+          createSpectator(
+            corner.x + perpX,
+            cy,
+            corner.z + perpZ,
+            cIdx * 3 + i + r,
+            4.2,
+            isPhoto,
+            corner.rot + Math.PI
+          );
+        }
+      }
+    });
 
     scene.add(stadiumGroup);
 
@@ -601,6 +937,12 @@ export default function FootballGame({
       baseZ: number;
       walkCycle: number;
       diveAngle: number;
+      isDiving?: boolean;
+      diveTimer?: number;
+      diveDuration?: number;
+      diveTargetX?: number;
+      diveTargetY?: number;
+      diveDir?: number;
       tackleTimer: number;
       dribbleTimer: number; // AI dribble animation
       sprintTimer: number; // AI sprint burst
@@ -729,6 +1071,12 @@ export default function FootballGame({
         baseZ,
         walkCycle: Math.random() * Math.PI * 2,
         diveAngle: 0,
+        isDiving: false,
+        diveTimer: 0,
+        diveDuration: 0,
+        diveTargetX: 0,
+        diveTargetY: 0,
+        diveDir: 0,
         tackleTimer: 0,
         dribbleTimer: 0,
         sprintTimer: 0,
@@ -1211,6 +1559,171 @@ export default function FootballGame({
       }
     }
 
+    // --- RAYCASTING & MOUSE AIMING FOR SHOTS & PASSES ---
+    const raycaster = new THREE.Raycaster();
+    const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const groundIntersection = new THREE.Vector3();
+    const mouseNDC = new THREE.Vector2();
+
+    // 3D Visual Aiming Reticle on the pitch grass
+    const aimIndicatorGroup = new THREE.Group();
+    aimIndicatorGroup.visible = false;
+
+    const aimRingGeom = new THREE.RingGeometry(1.6, 2.1, 32);
+    const aimRingMat = new THREE.MeshBasicMaterial({
+      color: 0x10b981,
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const ringMesh = new THREE.Mesh(aimRingGeom, aimRingMat);
+    ringMesh.rotation.x = -Math.PI / 2;
+    ringMesh.position.y = 0.05;
+
+    const centerDotGeom = new THREE.CircleGeometry(0.5, 24);
+    const centerDotMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.9,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const centerDot = new THREE.Mesh(centerDotGeom, centerDotMat);
+    centerDot.rotation.x = -Math.PI / 2;
+    centerDot.position.y = 0.06;
+
+    const crossGeom = new THREE.PlaneGeometry(0.22, 4.6);
+    const crossMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.8,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const cross1 = new THREE.Mesh(crossGeom, crossMat);
+    cross1.rotation.x = -Math.PI / 2;
+    cross1.position.y = 0.05;
+    const cross2 = new THREE.Mesh(crossGeom, crossMat);
+    cross2.rotation.x = -Math.PI / 2;
+    cross2.rotation.z = Math.PI / 2;
+    cross2.position.y = 0.05;
+
+    aimIndicatorGroup.add(ringMesh, centerDot, cross1, cross2);
+    scene.add(aimIndicatorGroup);
+
+    let chargeAction: {
+      active: boolean;
+      type: 'shoot' | 'pass';
+      startTime: number;
+      clientX: number;
+      clientY: number;
+    } | null = null;
+
+    // Execute charged shot aiming towards 3D target point on pitch or monumental goal
+    function executeAimShot(targetPoint: THREE.Vector3, power: number) {
+      const activeP = homePlayers[activePlayerIndexRef.current];
+      if (!activeP) return;
+
+      const distToBall = activeP.group.position.distanceTo(ball.position);
+      const hasPossession =
+        ballPossession && ballPossession.team === 'home' && ballPossession.index === activePlayerIndexRef.current;
+
+      if (distToBall > 4.5 && !hasPossession) return;
+
+      ballPossession = null;
+      ballFreeTimer = 0.35;
+      lastTouchTeamRef.current = 'home';
+
+      const goalW = 32.0;
+      let targetX = targetPoint.x;
+      let targetZ = targetPoint.z;
+
+      // If clicked towards the rival goal half, aim inside the 32m monumental goalmouth
+      if (targetPoint.z < -fieldLength / 2 + 50) {
+        targetX = THREE.MathUtils.clamp(targetPoint.x, -goalW / 2 + 1.2, goalW / 2 - 1.2);
+        targetZ = -fieldLength / 2;
+      }
+
+      // "si es muy fuerte el balón se levanta un poco"
+      // If power > 0.5, the ball lifts up majestically into top bins or crossbar!
+      let targetY = 0.58;
+      let extraLift = 0;
+      if (power > 0.5) {
+        const liftFactor = (power - 0.5) / 0.5; // 0 to 1
+        targetY = 1.2 + liftFactor * 5.8; // reaches up to 7m high (right below the 7.8m crossbar!)
+        extraLift = 0.28 + liftFactor * 0.45; // upward arc
+      } else {
+        targetY = 0.58 + power * 0.9; // low driving shot along turf
+      }
+
+      const shotDir = new THREE.Vector3(targetX - ball.position.x, targetY - ball.position.y, targetZ - ball.position.z).normalize();
+      const shotSpeed = 1.05 + power * 1.1; // fast, satisfying rocket shot
+      ballVelocity.copy(shotDir.multiplyScalar(shotSpeed));
+      ballVelocity.y += extraLift;
+
+      sounds.playKick();
+      if (power > 0.75) sounds.playCrowdGasp();
+
+      activeP.group.rotation.y = Math.atan2(targetX - activeP.group.position.x, targetZ - activeP.group.position.z) + Math.PI;
+    }
+
+    // Execute charged pass aiming towards 3D target point on pitch or teammate
+    function executeAimPass(targetPoint: THREE.Vector3, power: number) {
+      const activeP = homePlayers[activePlayerIndexRef.current];
+      if (!activeP) return;
+
+      const distToBall = activeP.group.position.distanceTo(ball.position);
+      const hasPossession =
+        ballPossession && ballPossession.team === 'home' && ballPossession.index === activePlayerIndexRef.current;
+
+      if (distToBall > 4.5 && !hasPossession) return;
+
+      // Find nearest teammate to the clicked 3D target point
+      let bestTeammateIdx = -1;
+      let minTargetDist = Infinity;
+
+      homePlayers.forEach((tm, idx) => {
+        if (idx === activePlayerIndexRef.current || tm.isGoalkeeper) return;
+        const d = tm.group.position.distanceTo(targetPoint);
+        if (d < minTargetDist) {
+          minTargetDist = d;
+          bestTeammateIdx = idx;
+        }
+      });
+
+      let passTarget = targetPoint.clone();
+      if (bestTeammateIdx !== -1 && minTargetDist < 28) {
+        const tm = homePlayers[bestTeammateIdx];
+        if (checkOffside(tm.group.position)) {
+          ballPossession = null;
+          triggerOffside(tm.group.position);
+          return;
+        }
+        passTarget = tm.group.position.clone();
+        setActivePlayerIndex(bestTeammateIdx);
+        activePlayerIndexRef.current = bestTeammateIdx;
+      }
+
+      ballPossession = null;
+      ballFreeTimer = 0.35;
+      lastTouchTeamRef.current = 'home';
+
+      // Chipped / aerial pass if power > 0.55
+      let passLift = 0.05;
+      if (power > 0.55) {
+        passLift = 0.26 + (power - 0.55) * 0.45; // aerial chip
+      }
+
+      const passDir = new THREE.Vector3(passTarget.x - ball.position.x, 0, passTarget.z - ball.position.z).normalize();
+      passDir.y = passLift;
+      const passSpeed = 0.85 + power * 0.8;
+      ballVelocity.copy(passDir.multiplyScalar(passSpeed));
+
+      sounds.playPass();
+      activeP.group.rotation.y = Math.atan2(passTarget.x - activeP.group.position.x, passTarget.z - activeP.group.position.z) + Math.PI;
+    }
+
     // Slide Tackle Action (E)
     function executeSlideTackle() {
       const activeP = homePlayers[activePlayerIndexRef.current];
@@ -1304,7 +1817,20 @@ export default function FootballGame({
           }
           return;
         }
-        actionTriggersRef.current.kick = true;
+        if (!chargeAction) {
+          chargeAction = {
+            active: true,
+            type: 'shoot',
+            startTime: performance.now(),
+            clientX: window.innerWidth / 2,
+            clientY: window.innerHeight / 2,
+          };
+          if (powerBarContainerRef.current) {
+            powerBarContainerRef.current.style.display = 'flex';
+            powerBarContainerRef.current.style.left = `${window.innerWidth / 2}px`;
+            powerBarContainerRef.current.style.top = `${window.innerHeight / 2 - 60}px`;
+          }
+        }
       }
       if (e.code === 'KeyE') executeSlideTackle();
       if (e.code === 'KeyQ') executeDribbleSkill();
@@ -1313,26 +1839,93 @@ export default function FootballGame({
 
     const onKeyUp = (e: KeyboardEvent) => {
       keys[e.code] = false;
-      if (e.code === 'Space') actionTriggersRef.current.kick = false;
+      if (e.code === 'Space') {
+        if (chargeAction?.active) {
+          const elapsed = (performance.now() - chargeAction.startTime) / 1000;
+          const power = THREE.MathUtils.clamp(elapsed / 0.85, 0.2, 1.0);
+          chargeAction = null;
+          if (powerBarContainerRef.current) powerBarContainerRef.current.style.display = 'none';
+
+          // Space shoots towards rival goal center
+          executeAimShot(new THREE.Vector3(0, 0, -fieldLength / 2), power);
+        }
+      }
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') actionTriggersRef.current.sprint = false;
     };
 
     const onMouseDown = (e: MouseEvent) => {
       if (activeSetPieceRef.current) {
         if (activeSetPieceRef.current.team === 'home') {
-          if (e.button === 0) {
-            executeCurrentSetPiece('shoot');
-          } else if (e.button === 2) {
+          if (e.button === 0) executeCurrentSetPiece('shoot');
+          else if (e.button === 2) {
             e.preventDefault();
             executeCurrentSetPiece('pass');
           }
         }
         return;
       }
-      if (e.button === 0) actionTriggersRef.current.kick = true;
-      else if (e.button === 2) {
-        e.preventDefault();
-        executePass();
+
+      // Check if clicking inside UI elements (ignore if clicking HUD buttons/modals)
+      const target = e.target as HTMLElement;
+      if (target && target.closest('button, [role="button"], input, select')) return;
+      if (isPausedRef.current || gameOverRef.current || isWalkoutRef.current) return;
+
+      mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouseNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+      const type = e.button === 2 ? 'pass' : 'shoot';
+      chargeAction = {
+        active: true,
+        type,
+        startTime: performance.now(),
+        clientX: e.clientX,
+        clientY: e.clientY,
+      };
+
+      if (powerBarContainerRef.current) {
+        powerBarContainerRef.current.style.display = 'flex';
+        powerBarContainerRef.current.style.left = `${e.clientX}px`;
+        powerBarContainerRef.current.style.top = `${e.clientY - 45}px`;
+      }
+      if (powerBarFillRef.current) {
+        powerBarFillRef.current.style.width = '0%';
+        powerBarFillRef.current.className = 'h-full rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]';
+      }
+      if (powerBarLabelRef.current) {
+        powerBarLabelRef.current.innerText = type === 'shoot' ? '⚡ POTENCIA TIRO: 0%' : '🎯 POTENCIA PASE: 0%';
+      }
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouseNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+      if (chargeAction?.active && powerBarContainerRef.current) {
+        powerBarContainerRef.current.style.left = `${e.clientX}px`;
+        powerBarContainerRef.current.style.top = `${e.clientY - 45}px`;
+      }
+    };
+
+    const onMouseUp = (e: MouseEvent) => {
+      if (!chargeAction || !chargeAction.active) return;
+
+      const elapsed = (performance.now() - chargeAction.startTime) / 1000;
+      const power = THREE.MathUtils.clamp(elapsed / 0.85, 0.2, 1.0);
+      const actionType = chargeAction.type;
+      chargeAction = null;
+
+      if (powerBarContainerRef.current) {
+        powerBarContainerRef.current.style.display = 'none';
+      }
+
+      // Raycast to find exact 3D coordinates on pitch ground
+      raycaster.setFromCamera(mouseNDC, camera);
+      raycaster.ray.intersectPlane(groundPlane, groundIntersection);
+
+      if (actionType === 'shoot') {
+        executeAimShot(groundIntersection, power);
+      } else {
+        executeAimPass(groundIntersection, power);
       }
     };
 
@@ -1343,11 +1936,13 @@ export default function FootballGame({
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('contextmenu', onContextMenu);
 
     // --- GAME LOOP ---
     let animationFrameId: number;
-    let clock = new THREE.Clock();
+    const timer = new THREE.Timer();
     let walkoutTime = 0;
     let aiPassTimer = 0;
     let aiDribbleTimer = 0;
@@ -1356,7 +1951,8 @@ export default function FootballGame({
 
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
-      const delta = clock.getDelta();
+      timer.update();
+      const delta = Math.min(timer.getDelta(), 0.1);
 
       if (isPausedRef.current || gameOverRef.current) {
         renderer.render(scene, camera);
@@ -1516,13 +2112,35 @@ export default function FootballGame({
       if (activeSetPieceRef.current !== null) {
         ballVelocity.set(0, 0, 0);
 
-        // Keep ball at current set-piece position and animate excited fans
-        const time = clock.getElapsedTime();
+        // Keep ball at current set-piece position and animate excited fans and camera flashes
+        const time = timer.getElapsed();
         spectators.forEach((fan) => {
           fan.group.position.y = fan.baseY + Math.abs(Math.sin(time * fan.speed + fan.phase)) * 1.1;
-          fan.leftArm.rotation.z = Math.sin(time * 8 + fan.phase) * 0.9;
-          fan.rightArm.rotation.z = -Math.sin(time * 8 + fan.phase) * 0.9;
-          fan.group.lookAt(ball.position.x, fan.baseY * 0.35, ball.position.z);
+          if (fan.isTakingPhoto) {
+            fan.rightArm.rotation.x = -1.25 + Math.sin(time * 5 + fan.phase) * 0.12;
+            fan.leftArm.rotation.x = -1.15 + Math.cos(time * 5 + fan.phase) * 0.12;
+          } else {
+            fan.leftArm.rotation.z = Math.sin(time * 8 + fan.phase) * 0.9;
+            fan.rightArm.rotation.z = -Math.sin(time * 8 + fan.phase) * 0.9;
+          }
+          fan.group.lookAt(ball.position.x, fan.group.position.y, ball.position.z);
+        });
+
+        cameraFlashes.forEach((flash) => {
+          if (flash.activeTimer > 0) {
+            flash.activeTimer -= delta;
+            const intensity = Math.sin((flash.activeTimer / flash.duration) * Math.PI);
+            flash.mesh.scale.setScalar(flash.baseScale * (1 + intensity * 2.0));
+            (flash.mesh.material as THREE.MeshBasicMaterial).opacity = intensity;
+            flash.mesh.visible = true;
+          } else {
+            flash.mesh.visible = false;
+            flash.nextFlashIn -= delta;
+            if (flash.nextFlashIn <= 0) {
+              flash.activeTimer = flash.duration;
+              flash.nextFlashIn = 0.3 + Math.random() * 1.5;
+            }
+          }
         });
 
         // Camera smoothly frames set piece spot
@@ -1535,6 +2153,54 @@ export default function FootballGame({
 
         renderer.render(scene, camera);
         return;
+      }
+
+      // REAL-TIME CHARGE POWER BAR & 3D AIM INDICATOR
+      if (chargeAction?.active) {
+        const elapsed = (performance.now() - chargeAction.startTime) / 1000;
+        const power = THREE.MathUtils.clamp(elapsed / 0.85, 0.15, 1.0);
+        const powerPct = Math.round(power * 100);
+
+        if (powerBarFillRef.current) {
+          powerBarFillRef.current.style.width = `${powerPct}%`;
+          if (powerPct < 45) {
+            powerBarFillRef.current.className =
+              'h-full rounded-full transition-none bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]';
+          } else if (powerPct < 75) {
+            powerBarFillRef.current.className =
+              'h-full rounded-full transition-none bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.9)]';
+          } else {
+            powerBarFillRef.current.className =
+              'h-full rounded-full transition-none bg-rose-500 shadow-[0_0_16px_rgba(244,63,94,1.0)] animate-pulse';
+          }
+        }
+
+        if (powerBarLabelRef.current) {
+          if (chargeAction.type === 'shoot') {
+            powerBarLabelRef.current.innerText =
+              powerPct > 70 ? `🔥 TIRO POTENTE ALTO: ${powerPct}%` : `⚡ POTENCIA TIRO: ${powerPct}%`;
+          } else {
+            powerBarLabelRef.current.innerText =
+              powerPct > 70 ? `🚀 PASE BOMBEADO: ${powerPct}%` : `🎯 POTENCIA PASE: ${powerPct}%`;
+          }
+        }
+
+        // Raycast to place 3D Aim Reticle on the turf
+        raycaster.setFromCamera(mouseNDC, camera);
+        raycaster.ray.intersectPlane(groundPlane, groundIntersection);
+        aimIndicatorGroup.position.set(groundIntersection.x, 0.05, groundIntersection.z);
+        aimIndicatorGroup.visible = true;
+
+        const pulseScale = 1.0 + Math.sin(timer.getElapsed() * 10) * 0.12;
+        aimIndicatorGroup.scale.set(pulseScale, 1, pulseScale);
+
+        if (chargeAction.type === 'shoot') {
+          aimRingMat.color.setHex(powerPct > 70 ? 0xf43f5e : powerPct > 45 ? 0xfbbf24 : 0x10b981);
+        } else {
+          aimRingMat.color.setHex(0x38bdf8);
+        }
+      } else {
+        aimIndicatorGroup.visible = false;
       }
 
       // Live match auto-switch with anti-flutter hysteresis
@@ -1761,27 +2427,81 @@ export default function FootballGame({
         }
       });
 
-      // 3. HOME GOALKEEPER
+      // 3. HOME GOALKEEPER (Defiende la portería Sur en z = fieldLength / 2)
       const homeGK = homePlayers[0];
-      const targetGkX = THREE.MathUtils.clamp(ball.position.x * 0.72, -8.0, 8.0);
-      homeGK.group.position.x = THREE.MathUtils.lerp(homeGK.group.position.x, targetGkX, delta * 3.5);
-      homeGK.group.position.z = fieldLength / 2 - 2.8;
-      homeGK.group.rotation.y = 0;
+      const goalW = 32.0;
+      const goalH = 7.8;
 
-      if (ball.position.z > fieldLength / 2 - 25 && ballVelocity.z > 0.2) {
+      if (!homeGK.isDiving) {
+        const targetGkX = THREE.MathUtils.clamp(ball.position.x * 0.78, -goalW / 2 + 2.5, goalW / 2 - 2.5);
+        homeGK.group.position.x = THREE.MathUtils.lerp(homeGK.group.position.x, targetGkX, delta * 4.0);
+        homeGK.group.position.y = THREE.MathUtils.lerp(homeGK.group.position.y, 0, delta * 6);
+        homeGK.group.position.z = fieldLength / 2 - 2.5;
+        homeGK.group.rotation.y = 0;
+        homeGK.group.rotation.z = THREE.MathUtils.lerp(homeGK.group.rotation.z, 0, delta * 6);
+        homeGK.leftArm.rotation.z = THREE.MathUtils.lerp(homeGK.leftArm.rotation.z, 0, delta * 6);
+        homeGK.rightArm.rotation.z = THREE.MathUtils.lerp(homeGK.rightArm.rotation.z, 0, delta * 6);
+        homeGK.leftLeg.rotation.z = THREE.MathUtils.lerp(homeGK.leftLeg.rotation.z, 0, delta * 6);
+        homeGK.rightLeg.rotation.z = THREE.MathUtils.lerp(homeGK.rightLeg.rotation.z, 0, delta * 6);
+
+        // Detect incoming rival shot towards south goal and trigger dive!
+        if (ball.position.z > fieldLength / 2 - 42 && ballVelocity.z > 0.28) {
+          const tToGoal = (fieldLength / 2 - ball.position.z) / ballVelocity.z;
+          const predictedX = ball.position.x + ballVelocity.x * tToGoal;
+          const predictedY = Math.max(0.5, ball.position.y + ballVelocity.y * tToGoal);
+
+          const isIncomingOnTarget = Math.abs(predictedX) < goalW / 2 + 1.2 && predictedY < goalH + 0.8;
+          if (isIncomingOnTarget) {
+            homeGK.isDiving = true;
+            homeGK.diveTimer = Math.min(1.0, Math.max(0.65, tToGoal + 0.1));
+            homeGK.diveDuration = homeGK.diveTimer;
+            homeGK.diveTargetX = THREE.MathUtils.clamp(predictedX, -goalW / 2 + 1.5, goalW / 2 - 1.5);
+            homeGK.diveTargetY = THREE.MathUtils.clamp(predictedY, 0.8, goalH - 0.8);
+            homeGK.diveDir = Math.sign(predictedX - homeGK.group.position.x) || (Math.random() > 0.5 ? 1 : -1);
+          }
+        }
+      } else {
+        // Goalkeeper is diving through the air to block shot!
+        homeGK.diveTimer = (homeGK.diveTimer || 0) - delta;
+        const duration = homeGK.diveDuration || 0.9;
+        const progress = Math.max(0, Math.min(1, 1 - (homeGK.diveTimer || 0) / duration));
+
+        // Horizontal leap across goalmouth
+        homeGK.group.position.x += ((homeGK.diveTargetX || 0) - homeGK.group.position.x) * delta * 7.5;
+        // Parabolic vertical jump
+        const jumpH = Math.sin(progress * Math.PI) * Math.min(4.0, (homeGK.diveTargetY || 1.5) * 0.9);
+        homeGK.group.position.y = jumpH;
+        // Horizontal mid-air tilt
+        homeGK.group.rotation.z = -(homeGK.diveDir || 1) * 1.35 * Math.sin(progress * Math.PI);
+        // Arms stretched out towards ball
+        homeGK.leftArm.rotation.z = (homeGK.diveDir || 1) > 0 ? 1.85 : -1.85;
+        homeGK.rightArm.rotation.z = (homeGK.diveDir || 1) > 0 ? 1.85 : -1.85;
+
+        // Block shot check ("obviamente no todos")
         const gkDist = homeGK.group.position.distanceTo(ball.position);
-        if (gkDist < 4.2) {
-          ballPossession = null;
-          ballFreeTimer = 0.5;
-          sounds.playSave();
-          lastTouchTeamRef.current = 'home';
-          ballVelocity.z = -0.65;
-          ballVelocity.x += (Math.random() - 0.5) * 0.8;
-          homeGK.diveAngle = THREE.MathUtils.clamp((ball.position.x - homeGK.group.position.x) * 0.4, -0.85, 0.85);
+        if (gkDist < 4.0 && (homeGK.diveTimer || 0) > 0.08 && ballVelocity.z > 0) {
+          const isExtremeAngle = Math.abs(ball.position.x) > goalW / 2 - 2.5;
+          const isHighScreamer = ball.position.y > goalH - 2.0;
+          const saveChance = isExtremeAngle || isHighScreamer ? 0.35 : 0.72;
+
+          if (Math.random() < saveChance) {
+            ballPossession = null;
+            ballFreeTimer = 0.6;
+            sounds.playSave();
+            sounds.playCheer();
+            lastTouchTeamRef.current = 'home';
+            ballVelocity.z = -0.75 - Math.random() * 0.3;
+            ballVelocity.x = (homeGK.diveDir || 1) * (0.6 + Math.random() * 0.5);
+            ballVelocity.y = 0.25 + Math.random() * 0.3;
+            setRefereeNotice({ type: 'foul', text: '🧤 ¡PARADÓN DE TU PORTERO!' });
+            setTimeout(() => setRefereeNotice(null), 2000);
+          }
+        }
+
+        if ((homeGK.diveTimer || 0) <= 0) {
+          homeGK.isDiving = false;
         }
       }
-      homeGK.group.rotation.z = THREE.MathUtils.lerp(homeGK.group.rotation.z, homeGK.diveAngle || 0, delta * 5);
-      homeGK.diveAngle = THREE.MathUtils.lerp(homeGK.diveAngle || 0, 0, delta * 2);
 
       // 4. ADVANCED RIVAL AI (Dribles, Pases, Sprints, Barridas, Tiros)
       aiPassTimer += delta;
@@ -1919,27 +2639,79 @@ export default function FootballGame({
         p.rightLeg.rotation.x = -Math.sin(p.walkCycle) * 0.45;
       });
 
-      // 5. AWAY GOALKEEPER
+      // 5. AWAY GOALKEEPER (Defiende la portería Norte en z = -fieldLength / 2)
       const awayGK = awayPlayers[0];
-      const targetAwayGkX = THREE.MathUtils.clamp(ball.position.x * 0.72, -8.0, 8.0);
-      awayGK.group.position.x = THREE.MathUtils.lerp(awayGK.group.position.x, targetAwayGkX, delta * 3.5);
-      awayGK.group.position.z = -fieldLength / 2 + 2.8;
-      awayGK.group.rotation.y = Math.PI;
 
-      if (ball.position.z < -fieldLength / 2 + 25 && ballVelocity.z < -0.2) {
+      if (!awayGK.isDiving) {
+        const targetAwayGkX = THREE.MathUtils.clamp(ball.position.x * 0.78, -goalW / 2 + 2.5, goalW / 2 - 2.5);
+        awayGK.group.position.x = THREE.MathUtils.lerp(awayGK.group.position.x, targetAwayGkX, delta * 4.0);
+        awayGK.group.position.y = THREE.MathUtils.lerp(awayGK.group.position.y, 0, delta * 6);
+        awayGK.group.position.z = -fieldLength / 2 + 2.5;
+        awayGK.group.rotation.y = Math.PI;
+        awayGK.group.rotation.z = THREE.MathUtils.lerp(awayGK.group.rotation.z, 0, delta * 6);
+        awayGK.leftArm.rotation.z = THREE.MathUtils.lerp(awayGK.leftArm.rotation.z, 0, delta * 6);
+        awayGK.rightArm.rotation.z = THREE.MathUtils.lerp(awayGK.rightArm.rotation.z, 0, delta * 6);
+        awayGK.leftLeg.rotation.z = THREE.MathUtils.lerp(awayGK.leftLeg.rotation.z, 0, delta * 6);
+        awayGK.rightLeg.rotation.z = THREE.MathUtils.lerp(awayGK.rightLeg.rotation.z, 0, delta * 6);
+
+        // Detect incoming user shot towards north goal and trigger dive!
+        if (ball.position.z < -fieldLength / 2 + 42 && ballVelocity.z < -0.28) {
+          const tToGoal = (-fieldLength / 2 - ball.position.z) / ballVelocity.z;
+          const predictedX = ball.position.x + ballVelocity.x * tToGoal;
+          const predictedY = Math.max(0.5, ball.position.y + ballVelocity.y * tToGoal);
+
+          const isIncomingOnTarget = Math.abs(predictedX) < goalW / 2 + 1.2 && predictedY < goalH + 0.8;
+          if (isIncomingOnTarget) {
+            awayGK.isDiving = true;
+            awayGK.diveTimer = Math.min(1.0, Math.max(0.65, tToGoal + 0.1));
+            awayGK.diveDuration = awayGK.diveTimer;
+            awayGK.diveTargetX = THREE.MathUtils.clamp(predictedX, -goalW / 2 + 1.5, goalW / 2 - 1.5);
+            awayGK.diveTargetY = THREE.MathUtils.clamp(predictedY, 0.8, goalH - 0.8);
+            awayGK.diveDir = Math.sign(predictedX - awayGK.group.position.x) || (Math.random() > 0.5 ? 1 : -1);
+          }
+        }
+      } else {
+        // Goalkeeper is diving through the air to block shot! ("El portero rival se tira a bloquear")
+        awayGK.diveTimer = (awayGK.diveTimer || 0) - delta;
+        const duration = awayGK.diveDuration || 0.9;
+        const progress = Math.max(0, Math.min(1, 1 - (awayGK.diveTimer || 0) / duration));
+
+        // Horizontal leap across goalmouth
+        awayGK.group.position.x += ((awayGK.diveTargetX || 0) - awayGK.group.position.x) * delta * 7.5;
+        // Parabolic vertical jump
+        const jumpH = Math.sin(progress * Math.PI) * Math.min(4.0, (awayGK.diveTargetY || 1.5) * 0.9);
+        awayGK.group.position.y = jumpH;
+        // Horizontal mid-air tilt (facing north)
+        awayGK.group.rotation.z = (awayGK.diveDir || 1) * 1.35 * Math.sin(progress * Math.PI);
+        // Arms stretched out towards ball
+        awayGK.leftArm.rotation.z = (awayGK.diveDir || 1) > 0 ? 1.85 : -1.85;
+        awayGK.rightArm.rotation.z = (awayGK.diveDir || 1) > 0 ? 1.85 : -1.85;
+
+        // Block shot check ("obviamente no todos")
         const gkDist = awayGK.group.position.distanceTo(ball.position);
-        if (gkDist < 4.2) {
-          ballPossession = null;
-          ballFreeTimer = 0.5;
-          sounds.playSave();
-          lastTouchTeamRef.current = 'away';
-          ballVelocity.z = 0.65;
-          ballVelocity.x += (Math.random() - 0.5) * 0.8;
-          awayGK.diveAngle = THREE.MathUtils.clamp((awayGK.group.position.x - ball.position.x) * 0.4, -0.85, 0.85);
+        if (gkDist < 4.0 && (awayGK.diveTimer || 0) > 0.08 && ballVelocity.z < 0) {
+          const isExtremeAngle = Math.abs(ball.position.x) > goalW / 2 - 2.5;
+          const isHighScreamer = ball.position.y > goalH - 2.0;
+          const saveChance = isExtremeAngle || isHighScreamer ? 0.35 : 0.72; // not all shots blocked!
+
+          if (Math.random() < saveChance) {
+            ballPossession = null;
+            ballFreeTimer = 0.6;
+            sounds.playSave();
+            sounds.playCrowdGasp();
+            lastTouchTeamRef.current = 'away';
+            ballVelocity.z = 0.75 + Math.random() * 0.3;
+            ballVelocity.x = (awayGK.diveDir || 1) * (0.6 + Math.random() * 0.5);
+            ballVelocity.y = 0.25 + Math.random() * 0.3;
+            setRefereeNotice({ type: 'foul', text: '🧤 ¡PARADÓN DEL PORTERO RIVAL!' });
+            setTimeout(() => setRefereeNotice(null), 2000);
+          }
+        }
+
+        if ((awayGK.diveTimer || 0) <= 0) {
+          awayGK.isDiving = false;
         }
       }
-      awayGK.group.rotation.z = THREE.MathUtils.lerp(awayGK.group.rotation.z, awayGK.diveAngle || 0, delta * 5);
-      awayGK.diveAngle = THREE.MathUtils.lerp(awayGK.diveAngle || 0, 0, delta * 2);
 
       // 6. BALL PHYSICS & BOUNDARIES (SAQUE DE BANDA & TIRO DE ESQUINA)
       ball.position.add(ballVelocity);
@@ -1964,13 +2736,14 @@ export default function FootballGame({
         triggerThrowIn(Math.sign(ball.position.x) * (fieldWidth / 2), ball.position.z);
       }
 
-      // GOAL & CORNER / GOAL KICK CHECK
-      const goalWidth = 15;
+      // GOAL & CORNER / GOAL KICK CHECK (Arquería de 32m x 7.8m)
+      const goalWidth = 32.0;
+      const goalHeight = 7.8;
       const isInsideGoalX = Math.abs(ball.position.x) < goalWidth / 2;
 
       if (!goalCooldownRef.current) {
         // Player scores in North goal (z < -fieldLength / 2)
-        if (ball.position.z < -fieldLength / 2 && isInsideGoalX && ball.position.y < 4.6) {
+        if (ball.position.z < -fieldLength / 2 && isInsideGoalX && ball.position.y < goalHeight && ball.position.y > 0) {
           ballPossession = null;
           ballFreeTimer = 3.5;
           goalCooldownRef.current = true;
@@ -1986,7 +2759,7 @@ export default function FootballGame({
           }, 3500);
         }
         // AI Rival scores in South goal (z > fieldLength / 2)
-        else if (ball.position.z > fieldLength / 2 && isInsideGoalX && ball.position.y < 4.6) {
+        else if (ball.position.z > fieldLength / 2 && isInsideGoalX && ball.position.y < goalHeight && ball.position.y > 0) {
           ballPossession = null;
           ballFreeTimer = 3.5;
           goalCooldownRef.current = true;
@@ -2045,54 +2818,131 @@ export default function FootballGame({
         camera.lookAt(0, 0, 0);
       }
 
-      // 8. ANIMATED SPECTATORS (Aficionados saltando y siguiendo el balón con la mirada)
-      const matchTime = clock.getElapsedTime();
+      // 8. UPDATE CAMERA FLASHES & ANIMATED SPECTATORS (Aficionados saltando y tomando fotos)
+      const matchTime = timer.getElapsed();
       const isExcited = goalAnnouncement !== null || activeSetPieceRef.current !== null;
       const jumpAmp = isExcited ? 1.3 : 0.7;
 
-      spectators.forEach((fan) => {
-        fan.group.position.y = fan.baseY + Math.abs(Math.sin(matchTime * fan.speed + fan.phase)) * jumpAmp;
-        fan.leftArm.rotation.z = Math.sin(matchTime * (isExcited ? 12 : 5) + fan.phase) * 0.85;
-        fan.rightArm.rotation.z = -Math.sin(matchTime * (isExcited ? 12 : 5) + fan.phase) * 0.85;
-        fan.group.lookAt(ball.position.x, fan.baseY * 0.35, ball.position.z);
+      cameraFlashes.forEach((flash) => {
+        if (flash.activeTimer > 0) {
+          flash.activeTimer -= delta;
+          const intensity = Math.sin((flash.activeTimer / flash.duration) * Math.PI);
+          flash.mesh.scale.setScalar(flash.baseScale * (1 + intensity * 2.2));
+          (flash.mesh.material as THREE.MeshBasicMaterial).opacity = intensity;
+          flash.mesh.visible = true;
+        } else {
+          flash.mesh.visible = false;
+          flash.nextFlashIn -= delta;
+          if (flash.nextFlashIn <= 0) {
+            flash.activeTimer = flash.duration;
+            flash.nextFlashIn = 0.35 + Math.random() * (isExcited ? 1.2 : 2.8);
+          }
+        }
       });
 
-      // 9. ENHANCED 2D RADAR MINIMAP
+      spectators.forEach((fan) => {
+        fan.group.position.y = fan.baseY + Math.abs(Math.sin(matchTime * fan.speed + fan.phase)) * jumpAmp;
+        if (fan.isTakingPhoto) {
+          fan.rightArm.rotation.x = -1.25 + Math.sin(matchTime * 4 + fan.phase) * 0.12;
+          fan.leftArm.rotation.x = -1.15 + Math.cos(matchTime * 4 + fan.phase) * 0.12;
+        } else {
+          fan.leftArm.rotation.z = Math.sin(matchTime * (isExcited ? 12 : 5) + fan.phase) * 0.85;
+          fan.rightArm.rotation.z = -Math.sin(matchTime * (isExcited ? 12 : 5) + fan.phase) * 0.85;
+        }
+        fan.group.lookAt(ball.position.x, fan.group.position.y, ball.position.z);
+      });
+
+      // 9. ENHANCED 2D RADAR MINIMAP - FULL STADIUM BOWL & TWINKLING FLASHES
       if (radarCanvasRef.current) {
         const cvs = radarCanvasRef.current;
         const ctx = cvs.getContext('2d');
         if (ctx) {
           ctx.clearRect(0, 0, cvs.width, cvs.height);
 
-          // Stadium field lawn
-          ctx.fillStyle = '#14532d';
+          // 1. Outer Stadium Arena Background & Exterior Walls
+          ctx.fillStyle = '#090d16';
           ctx.fillRect(0, 0, cvs.width, cvs.height);
 
-          // Pitch markings
-          ctx.strokeStyle = '#ffffff66';
+          // Stadium Bowl Rim
+          ctx.fillStyle = '#1e293b';
+          ctx.beginPath();
+          ctx.roundRect(4, 4, cvs.width - 8, cvs.height - 8, 14);
+          ctx.fill();
+          ctx.strokeStyle = '#38bdf844';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          // Grandstand Seating Tiers on all 4 sides
+          ctx.fillStyle = '#0f172a';
+          // North Stand (top)
+          ctx.fillRect(16, 8, cvs.width - 32, 16);
+          // South Stand (bottom)
+          ctx.fillRect(16, cvs.height - 24, cvs.width - 32, 16);
+          // West Stand (left)
+          ctx.fillRect(8, 20, 16, cvs.height - 40);
+          // East Stand (right)
+          ctx.fillRect(cvs.width - 24, 20, 16, cvs.height - 40);
+
+          // Animated crowd speckles and twinkling camera flashes on the radar!
+          for (let f = 0; f < 8; f++) {
+            const flashActive = Math.sin(matchTime * 14 + f * 1.8) > 0.65;
+            if (flashActive) {
+              const fx = 12 + ((f * 37) % (cvs.width - 24));
+              const fy = 10 + ((f * 53) % (cvs.height - 20));
+              ctx.beginPath();
+              ctx.arc(fx, fy, 2.2, 0, Math.PI * 2);
+              ctx.fillStyle = '#ffffff';
+              ctx.shadowColor = '#60a5fa';
+              ctx.shadowBlur = 6;
+              ctx.fill();
+              ctx.shadowBlur = 0;
+            }
+          }
+
+          // 2. Pitch Lawn & Markings in Center
+          const pitchMarginX = 25;
+          const pitchMarginY = 25;
+          const pWidth = cvs.width - pitchMarginX * 2;
+          const pHeight = cvs.height - pitchMarginY * 2;
+
+          ctx.fillStyle = '#15803d';
+          ctx.fillRect(pitchMarginX, pitchMarginY, pWidth, pHeight);
+
+          ctx.strokeStyle = '#ffffff88';
           ctx.lineWidth = 1.2;
-          ctx.strokeRect(5, 5, cvs.width - 10, cvs.height - 10);
+          ctx.strokeRect(pitchMarginX, pitchMarginY, pWidth, pHeight);
 
           // Midfield line & center circle
           ctx.beginPath();
-          ctx.moveTo(5, cvs.height / 2);
-          ctx.lineTo(cvs.width - 5, cvs.height / 2);
+          ctx.moveTo(pitchMarginX, cvs.height / 2);
+          ctx.lineTo(pitchMarginX + pWidth, cvs.height / 2);
           ctx.stroke();
 
           ctx.beginPath();
-          ctx.arc(cvs.width / 2, cvs.height / 2, 12, 0, Math.PI * 2);
+          ctx.arc(cvs.width / 2, cvs.height / 2, 9, 0, Math.PI * 2);
           ctx.stroke();
 
           // Penalty boxes
-          const boxW = (cvs.width - 10) * 0.48;
-          const boxH = (cvs.height - 10) * 0.14;
+          const boxW = pWidth * 0.52;
+          const boxH = pHeight * 0.15;
           // North box
-          ctx.strokeRect((cvs.width - boxW) / 2, 5, boxW, boxH);
+          ctx.strokeRect((cvs.width - boxW) / 2, pitchMarginY, boxW, boxH);
           // South box
-          ctx.strokeRect((cvs.width - boxW) / 2, cvs.height - 5 - boxH, boxW, boxH);
+          ctx.strokeRect((cvs.width - boxW) / 2, pitchMarginY + pHeight - boxH, boxW, boxH);
 
-          const mapX = (wx: number) => ((wx + fieldWidth / 2) / fieldWidth) * (cvs.width - 14) + 7;
-          const mapY = (wz: number) => ((wz + fieldLength / 2) / fieldLength) * (cvs.height - 14) + 7;
+          // Goalmouth lines (larger goals)
+          ctx.strokeStyle = '#f8fafc';
+          ctx.lineWidth = 2.4;
+          const goalLineW = pWidth * 0.34;
+          ctx.beginPath();
+          ctx.moveTo((cvs.width - goalLineW) / 2, pitchMarginY);
+          ctx.lineTo((cvs.width + goalLineW) / 2, pitchMarginY);
+          ctx.moveTo((cvs.width - goalLineW) / 2, pitchMarginY + pHeight);
+          ctx.lineTo((cvs.width + goalLineW) / 2, pitchMarginY + pHeight);
+          ctx.stroke();
+
+          const mapX = (wx: number) => ((wx + fieldWidth / 2) / fieldWidth) * (pWidth - 6) + pitchMarginX + 3;
+          const mapY = (wz: number) => ((wz + fieldLength / 2) / fieldLength) * (pHeight - 6) + pitchMarginY + 3;
 
           // Home players
           homePlayers.forEach((p, idx) => {
@@ -2100,13 +2950,13 @@ export default function FootballGame({
             const ry = mapY(p.group.position.z);
 
             ctx.beginPath();
-            ctx.arc(rx, ry, idx === activePlayerIndexRef.current ? 5 : 3.2, 0, Math.PI * 2);
+            ctx.arc(rx, ry, idx === activePlayerIndexRef.current ? 4.8 : 3.0, 0, Math.PI * 2);
             ctx.fillStyle = p.isGoalkeeper ? '#facc15' : homeKit;
             ctx.fill();
 
             if (idx === activePlayerIndexRef.current) {
               ctx.strokeStyle = '#ffffff';
-              ctx.lineWidth = 2;
+              ctx.lineWidth = 1.8;
               ctx.stroke();
             }
           });
@@ -2117,7 +2967,7 @@ export default function FootballGame({
             const ry = mapY(p.group.position.z);
 
             ctx.beginPath();
-            ctx.arc(rx, ry, 3.2, 0, Math.PI * 2);
+            ctx.arc(rx, ry, 3.0, 0, Math.PI * 2);
             ctx.fillStyle = p.isGoalkeeper ? '#fb923c' : awayKit;
             ctx.fill();
           });
@@ -2126,10 +2976,10 @@ export default function FootballGame({
           const bx = mapX(ball.position.x);
           const by = mapY(ball.position.z);
           ctx.beginPath();
-          ctx.arc(bx, by, 4, 0, Math.PI * 2);
+          ctx.arc(bx, by, 3.8, 0, Math.PI * 2);
           ctx.fillStyle = '#ffffff';
           ctx.shadowColor = '#38bdf8';
-          ctx.shadowBlur = 4;
+          ctx.shadowBlur = 5;
           ctx.fill();
           ctx.shadowBlur = 0;
         }
@@ -2530,15 +3380,33 @@ export default function FootballGame({
       </div>
 
       {/* Quick Controls Reminder Bar */}
-      <div className="absolute top-16 left-4 z-20 hidden lg:flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 text-[11px] text-slate-300">
-        <span className="font-bold text-amber-400">D:</span> Delante |{' '}
-        <span className="font-bold text-amber-400">A:</span> Atrás |{' '}
-        <span className="font-bold text-amber-400">W:</span> Izquierda |{' '}
-        <span className="font-bold text-amber-400">S:</span> Derecha |{' '}
+      <div className="absolute top-16 left-4 z-20 hidden lg:flex items-center gap-2 bg-black/70 backdrop-blur-md px-3.5 py-1.5 rounded-xl border border-white/15 text-[11px] text-slate-300 shadow-xl">
+        <span className="font-bold text-amber-400">D/A/W/S:</span> Mover |{' '}
         <span className="font-bold text-amber-400">E:</span> Barrida |{' '}
         <span className="font-bold text-sky-400">Q:</span> Driblear |{' '}
-        <span className="font-bold text-emerald-400">Click Der:</span> Pasar |{' '}
-        <span className="font-bold text-rose-400">Click Izq:</span> Tirar
+        <span className="font-bold text-rose-400">Click Izq (Mantener):</span> Apuntar y Cargar Tiro (se eleva con potencia) |{' '}
+        <span className="font-bold text-emerald-400">Click Der (Mantener):</span> Apuntar y Pasar |{' '}
+        <span className="font-bold text-amber-300">🧤 Portero:</span> Se tira a tapar tiros
+      </div>
+
+      {/* Floating Mouse Aim & Power Bar */}
+      <div
+        ref={powerBarContainerRef}
+        className="fixed pointer-events-none z-50 hidden flex-col items-center gap-1.5 -translate-x-1/2 -translate-y-14"
+        style={{ left: 0, top: 0 }}
+      >
+        <div className="bg-slate-950/95 border-2 border-white/30 px-3.5 py-2 rounded-2xl shadow-[0_0_20px_rgba(0,0,0,0.8)] backdrop-blur-md flex flex-col items-center gap-1 min-w-[155px]">
+          <span ref={powerBarLabelRef} className="text-[11px] font-black uppercase tracking-wider text-amber-300 drop-shadow">
+            ⚡ POTENCIA: 0%
+          </span>
+          <div className="w-full bg-slate-800/90 h-3 rounded-full overflow-hidden p-0.5 border border-white/20">
+            <div
+              ref={powerBarFillRef}
+              className="h-full rounded-full transition-none bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]"
+              style={{ width: '0%' }}
+            />
+          </div>
+        </div>
       </div>
 
       {/* --- ACTIVE SET-PIECE EXECUTION CARD (PAUSA EL JUEGO PARA COBRAR) --- */}
@@ -2741,15 +3609,16 @@ export default function FootballGame({
         </div>
       )}
 
-      {/* --- 2D RADAR MINIMAP --- */}
+      {/* --- 2D RADAR MINIMAP (Estadio Entero con Tribunas y Flashes) --- */}
       <div className="absolute bottom-6 right-6 z-20 hidden md:block">
-        <div className="bg-slate-950/80 p-2 rounded-2xl border border-white/20 shadow-2xl backdrop-blur-md">
-          <canvas ref={radarCanvasRef} width={130} height={190} className="rounded-xl" />
+        <div className="bg-slate-950/85 p-2 rounded-2xl border border-white/20 shadow-2xl backdrop-blur-md">
+          <canvas ref={radarCanvasRef} width={150} height={210} className="rounded-xl" />
           <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1.5 font-medium px-1">
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: team?.jerseyColor || '#2563eb' }} />
               11 Local
             </span>
+            <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">🏟️ Estadio</span>
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: team?.rivalColor || '#dc2626' }} />
               11 Rival
@@ -2963,11 +3832,11 @@ export default function FootballGame({
               </div>
               <div className="flex justify-between border-b border-white/10 pb-2">
                 <span className="font-semibold text-white">Pasar la pelota:</span>
-                <span className="font-mono text-emerald-400">Click Derecho</span>
+                <span className="font-mono text-emerald-400">Click Derecho (Mantener para cargar pase bombeado)</span>
               </div>
               <div className="flex justify-between border-b border-white/10 pb-2">
                 <span className="font-semibold text-white">Tirar a portería:</span>
-                <span className="font-mono text-rose-400">Click Izquierdo / Espacio</span>
+                <span className="font-mono text-rose-400">Click Izq (Mantener para cargar tiro potente y alto)</span>
               </div>
               <div className="flex justify-between border-b border-white/10 pb-2">
                 <span className="font-semibold text-white">Sprint / Correr:</span>
@@ -2975,15 +3844,18 @@ export default function FootballGame({
               </div>
             </div>
 
-            <div className="mt-4 p-3 bg-blue-950/40 rounded-xl border border-blue-500/20 text-xs text-blue-200 space-y-1">
+            <div className="mt-4 p-3 bg-blue-950/40 rounded-xl border border-blue-500/20 text-xs text-blue-200 space-y-1.5">
               <div>
-                ⏱️ <strong>Estructura del Partido:</strong> 1er Tiempo (2 mins) + 2do Tiempo (2 mins). Si hay empate, se juegan 2 mins de Prórroga y luego Penaltis.
+                🎯 <strong>Apuntar y Cargar con el Ratón:</strong> Haz click donde quieras tirar o pasar. Mantén presionado para llenar la barra de potencia. Con mucha fuerza, el balón se eleva hacia la escuadra o techa a los rivales.
               </div>
               <div>
-                🚩 <strong>Saques y Faltas:</strong> Saque de banda por la línea lateral, Tiro de esquina (córner) si despeja la defensa, y fueras de juego.
+                🧤 <strong>Porteros Acrobáticos y Arquería Más Grande:</strong> La portería ahora mide 32m x 7.8m. Los porteros se tiran en plancha por el aire para bloquear tiros difíciles (¡pero no todos!).
               </div>
               <div>
-                🤖 <strong>IA Rival Inteligente:</strong> Pasa la pelota a compañeros libres, driblea con regates, sprintea, salta en barrera y mete barridas.
+                ⏱️ <strong>Estructura del Partido:</strong> 1er Tiempo (2 mins) + 2do Tiempo (2 mins). Prórroga y Penaltis si hay empate.
+              </div>
+              <div>
+                🚩 <strong>Saques y Faltas:</strong> Saque de banda, córner, tiros libres con barrera y fueras de juego.
               </div>
             </div>
 
