@@ -31,7 +31,7 @@ const INITIAL_MESSAGES: MailboxMessage[] = [
 ];
 
 export default function App() {
-  const [screen, setScreen] = useState<AppScreen>('loading');
+  const [screen, setScreen] = useState<AppScreen>('home');
   const [isMailboxOpen, setIsMailboxOpen] = useState(false);
   const [isShopOpen, setIsShopOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -182,7 +182,12 @@ export default function App() {
       {screen === 'loading' && (
         <LoadingScreen
           durationSeconds={20}
-          onComplete={() => setScreen('home')}
+          onComplete={() => {
+            try {
+              sessionStorage.setItem('fu_visited', 'true');
+            } catch {}
+            setScreen('home');
+          }}
         />
       )}
 

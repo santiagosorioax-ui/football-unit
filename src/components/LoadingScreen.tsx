@@ -52,7 +52,14 @@ export default function LoadingScreen({
   }, [durationSeconds, onComplete]);
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-black select-none font-sans flex flex-col justify-between p-6 md:p-12 z-50">
+    <div
+      onClick={() => {
+        sounds.playWhistle(true);
+        onComplete();
+      }}
+      className="relative w-screen h-screen overflow-hidden bg-black select-none font-sans flex flex-col justify-between p-6 md:p-12 z-50 cursor-pointer"
+      title="Clic para continuar"
+    >
       {/* Background Hero Image with Dark Blend */}
       <div className="absolute inset-0 pointer-events-none">
         <img

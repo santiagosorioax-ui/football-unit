@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="100%" height="100%" preserveAspectRatio="xMidYMid slice">
+  <!-- Deep Red Solid Background from Video -->
+  <rect width="1920" height="1080" fill="#820000" />
+
+  <!-- Bottom-right Dark Maroon Curved Shape from Video -->
+  <path d="M 1500 1080 Q 1660 840 1920 810 L 1920 1080 Z" fill="#580000" />
+
+  <!-- Top-left Circle 1 -->
+  <circle cx="340" cy="110" r="135" fill="#ff0000" />
+
+  <!-- Top-center-left Circle 2 -->
+  <circle cx="795" cy="135" r="90" fill="#ff0000" />
+
+  <!-- Top-center-right Circle 3 -->
+  <circle cx="1270" cy="120" r="125" fill="#ff0000" />
+
+  <!-- Top-right Circle 4 -->
+  <circle cx="1780" cy="140" r="140" fill="#ff0000" />
+
+  <!-- Center-bottom Semicircle 5 (Half Circle with Flat Bottom) -->
+  <path d="M 695 680 A 90 90 0 0 1 875 680 Z" fill="#ff0000" />
+</svg>
