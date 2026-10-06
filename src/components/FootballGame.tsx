@@ -9,18 +9,16 @@ import {
   Info,
   Camera,
   Home,
-  FastForward,
   Shield,
-  Crosshair,
   AlertTriangle,
   Flag,
-  Zap,
   CornerDownRight,
   ArrowRight,
 } from 'lucide-react';
 import { sounds } from '../utils/audio';
 import { createSoccerBallTexture, createGrassTexture } from '../utils/textures';
 import { TeamCustomization } from '../types/game';
+import { getPlayerById } from '../data/players';
 
 export type GameDifficulty = 'easy' | 'normal' | 'hard';
 export type CameraMode = 'follow' | 'tv' | 'topDown';
@@ -28,9 +26,11 @@ export type MatchPeriod = '1st_half' | 'half_time' | '2nd_half' | 'extra_time' |
 
 interface FootballGameProps {
   team?: TeamCustomization;
+  mode?: 'match' | 'training';
   onShowLoading?: () => void;
   onExitToMenu?: (abandoned: boolean, pScore: number, aScore: number) => void;
   onMatchComplete?: (result: 'win' | 'loss' | 'tie', pScore: number, aScore: number) => void;
+  onGoalScored?: () => void;
 }
 
 // 11v11 Lineup Definitions (4-3-3 System on Colossal 175m x 110m Monumental Pitch)
@@ -45,17 +45,17 @@ interface PlayerRole {
 }
 
 const HOME_LINEUP_BASE: PlayerRole[] = [
-  { id: 0, name: 'Portero', role: 'POR', isGoalkeeper: true, baseX: 0, baseZ: 80 },
-  { id: 1, name: 'Martínez', role: 'LD', baseX: 40, baseZ: 58 },
-  { id: 2, name: 'Silva', role: 'DFC', baseX: 15, baseZ: 63 },
-  { id: 3, name: 'Gómez', role: 'DFC', baseX: -15, baseZ: 63 },
-  { id: 4, name: 'Torres', role: 'LI', baseX: -40, baseZ: 58 },
-  { id: 5, name: 'Romero', role: 'MCD', baseX: 0, baseZ: 38 },
-  { id: 6, name: 'Fernández', role: 'MC', baseX: 26, baseZ: 24 },
-  { id: 7, name: 'López', role: 'MC', baseX: -26, baseZ: 24 },
-  { id: 8, name: 'Navarro', role: 'ED', baseX: 36, baseZ: 8 },
+  { id: 0, name: 'Livaković', role: 'POR', isGoalkeeper: true, baseX: 0, baseZ: 80 },
+  { id: 1, name: 'Molina', role: 'LD', baseX: 40, baseZ: 58 },
+  { id: 2, name: 'Romero', role: 'DFC', baseX: 15, baseZ: 63 },
+  { id: 3, name: 'Upamecano', role: 'DFC', baseX: -15, baseZ: 63 },
+  { id: 4, name: 'Tagliafico', role: 'LI', baseX: -40, baseZ: 58 },
+  { id: 5, name: 'Amrabat', role: 'MCD', baseX: 0, baseZ: 38 },
+  { id: 6, name: 'Mac Allister', role: 'MC', baseX: 26, baseZ: 24 },
+  { id: 7, name: 'Rabiot', role: 'MC', baseX: -26, baseZ: 24 },
+  { id: 8, name: 'Antony', role: 'ED', baseX: 36, baseZ: 8 },
   { id: 9, name: 'Capitán', role: 'DC', isCaptain: true, baseX: 0, baseZ: 6 },
-  { id: 10, name: 'Morales', role: 'EI', baseX: -36, baseZ: 8 },
+  { id: 10, name: 'Gakpo', role: 'EI', baseX: -36, baseZ: 8 },
 ];
 
 const AWAY_LINEUP_BASE: PlayerRole[] = [
@@ -74,9 +74,11 @@ const AWAY_LINEUP_BASE: PlayerRole[] = [
 
 export default function FootballGame({
   team,
+  mode = 'match',
   onShowLoading,
   onExitToMenu,
   onMatchComplete,
+  onGoalScored,
 }: FootballGameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const radarCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -132,10 +134,8 @@ export default function FootballGame({
   const [awayPenalties, setAwayPenalties] = useState<boolean[]>([]);
   const [penaltyMessage, setPenaltyMessage] = useState<string>('Elige dirección para tirar tu penal');
 
-  // Virtual Joystick & Touch Controls
-  const joystickCenterRef = useRef<{ x: number; y: number } | null>(null);
+  // Virtual Input Ref
   const virtualInputRef = useRef<{ x: number; z: number }>({ x: 0, z: 0 });
-  const [joystickThumb, setJoystickThumb] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Mouse Aim & Charge Power Bar Refs
   const powerBarContainerRef = useRef<HTMLDivElement>(null);
@@ -2748,6 +2748,7 @@ export default function FootballGame({
           ballFreeTimer = 3.5;
           goalCooldownRef.current = true;
           setPlayerScore((s) => s + 1);
+          if (onGoalScored) onGoalScored();
           setGoalAnnouncement({ scorer: 'player', text: '¡¡¡GOOOOL DEL EQUIPO!!!' });
           sounds.playGoalCelebration();
           confetti({ particleCount: 160, spread: 90, origin: { y: 0.6 } });
@@ -3073,6 +3074,7 @@ export default function FootballGame({
     if (isGoal) {
       sounds.playGoalCelebration();
       setPlayerScore((s) => s + 1);
+      if (onGoalScored) onGoalScored();
       setPenaltyMessage(`¡¡GOOOL!! Tiraste a la ${direction} y engañaste al portero.`);
     } else {
       sounds.playSave();
@@ -3137,44 +3139,6 @@ export default function FootballGame({
     sounds.playWhistle(true);
   };
 
-  // Joystick touch handlers
-  const handleJoystickTouchStart = (e: React.TouchEvent | React.MouseEvent) => {
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-    joystickCenterRef.current = { x: clientX, y: clientY };
-    setJoystickThumb({ x: 0, y: 0 });
-  };
-
-  const handleJoystickTouchMove = (e: React.TouchEvent | React.MouseEvent) => {
-    if (!joystickCenterRef.current) return;
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-
-    const dx = clientX - joystickCenterRef.current.x;
-    const dy = clientY - joystickCenterRef.current.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const maxRadius = 45;
-
-    const clampedDist = Math.min(dist, maxRadius);
-    const angle = Math.atan2(dy, dx);
-
-    const nx = Math.cos(angle) * (clampedDist / maxRadius);
-    const ny = Math.sin(angle) * (clampedDist / maxRadius);
-
-    setJoystickThumb({
-      x: Math.cos(angle) * clampedDist,
-      y: Math.sin(angle) * clampedDist,
-    });
-
-    virtualInputRef.current = { x: nx, z: ny };
-  };
-
-  const handleJoystickTouchEnd = () => {
-    joystickCenterRef.current = null;
-    setJoystickThumb({ x: 0, y: 0 });
-    virtualInputRef.current = { x: 0, z: 0 };
-  };
-
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -3188,44 +3152,7 @@ export default function FootballGame({
 
       {/* --- CINEMATIC TUNNEL WALKOUT OVERLAY --- */}
       {isWalkout && (
-        <div className="absolute inset-0 pointer-events-auto flex flex-col justify-between p-6 z-30 bg-gradient-to-t from-black/80 via-transparent to-black/70">
-          <div className="flex items-center justify-between max-w-4xl mx-auto w-full pt-4">
-            <div className="flex items-center gap-3 bg-slate-900/90 border border-amber-500/40 px-5 py-2.5 rounded-2xl shadow-2xl backdrop-blur-md">
-              <Shield className="w-6 h-6 text-amber-400" />
-              <div>
-                <h1 className="text-white font-black tracking-wider text-sm sm:text-base uppercase flex items-center gap-2">
-                  {walkoutStep === 'tunnel'
-                    ? '🏟️ Salida de Vestuarios'
-                    : walkoutStep === 'handshake'
-                    ? '🤝 Saludo Protocolario entre Equipos'
-                    : walkoutStep === 'pause'
-                    ? '⏱️ Pausa Táctica y Concentración'
-                    : '🏃 Despliegue a sus Lugares'}
-                  <span className="text-amber-400 font-bold">•</span>
-                  <span className="text-amber-300 text-xs sm:text-sm font-bold">Estadio Monumental (175m x 110m)</span>
-                </h1>
-                <p className="text-slate-300 text-xs font-medium">
-                  {walkoutStep === 'tunnel'
-                    ? 'Los 22 jugadores salen del túnel hacia el terreno de juego'
-                    : walkoutStep === 'handshake'
-                    ? 'Los equipos se saludan de mano en el centro del campo con respeto mutuo'
-                    : walkoutStep === 'pause'
-                    ? 'Breve pausa táctica de concentración y arenga antes del pitido inicial'
-                    : 'Los jugadores corren a ocupar sus 22 posiciones tácticas antes del pitido inicial'}
-                </p>
-              </div>
-            </div>
-
-            <button
-              onClick={handleSkipWalkout}
-              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm tracking-wider uppercase transition-all shadow-xl flex items-center gap-2 transform active:scale-95"
-            >
-              <FastForward className="w-4 h-4 fill-slate-950" />
-              <span>Omitir Ceremonia</span>
-              <span className="hidden sm:inline opacity-75 font-mono text-[11px]">(Espacio)</span>
-            </button>
-          </div>
-
+        <div className="absolute inset-0 pointer-events-auto flex flex-col justify-end p-6 z-30 bg-gradient-to-t from-black/80 via-transparent to-black/30">
           <div className="max-w-4xl mx-auto w-full pb-4">
             <div className="bg-slate-950/85 border border-white/20 p-5 rounded-2xl shadow-2xl backdrop-blur-md flex flex-col sm:flex-row items-center justify-between gap-6">
               <div className="flex items-center gap-4 text-left">
@@ -3240,8 +3167,19 @@ export default function FootballGame({
                   <h3 className="text-white font-black text-lg tracking-wide uppercase">
                     {team?.teamName || 'Football Unit FC'}
                   </h3>
-                  <p className="text-slate-300 text-xs">
-                    Capitán: <span className="text-white font-bold">{team?.playerName || 'Capitán'}</span> • 1 Portero + 10 Jugadores
+                  <p className="text-slate-300 text-xs flex items-center gap-1.5 flex-wrap">
+                    <span>Capitán: <strong className="text-white">{team?.playerName || 'Capitán'}</strong></span>
+                    {team?.playerGrl && (
+                      <span className="px-1.5 py-0.2 rounded bg-amber-400 text-slate-950 font-black text-[10px]">
+                        GRL {team.playerGrl}
+                      </span>
+                    )}
+                    {team?.playerPosition && (
+                      <span className="px-1.5 py-0.2 rounded bg-white/20 text-white font-black text-[10px]">
+                        {team.playerPosition}
+                      </span>
+                    )}
+                    <span>• 1 Portero + 10 Jugadores</span>
                   </p>
                 </div>
               </div>
@@ -3307,8 +3245,16 @@ export default function FootballGame({
 
           {/* Period Badge & Timer */}
           <div className="ml-3 pl-3 border-l border-white/10 flex items-center gap-2">
-            <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 font-black text-[10px] uppercase tracking-wider border border-amber-400/30">
-              {matchPeriod === '1st_half'
+            <span
+              className={`px-2 py-0.5 rounded-md font-black text-[10px] uppercase tracking-wider border ${
+                mode === 'training'
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40'
+                  : 'bg-amber-500/20 text-amber-300 border-amber-400/30'
+              }`}
+            >
+              {mode === 'training'
+                ? 'ENTRENAMIENTO'
+                : matchPeriod === '1st_half'
                 ? '1T'
                 : matchPeriod === 'half_time'
                 ? 'DESCANSO'
@@ -3321,7 +3267,11 @@ export default function FootballGame({
                 : 'FINAL'}
             </span>
             <span className="font-mono font-bold text-amber-400 text-sm">
-              {matchPeriod === 'penalties' ? 'TANDA' : formatTime(timeRemaining)}
+              {mode === 'training'
+                ? 'LIBRE'
+                : matchPeriod === 'penalties'
+                ? 'TANDA'
+                : formatTime(timeRemaining)}
             </span>
           </div>
         </div>
@@ -3374,7 +3324,15 @@ export default function FootballGame({
         <div className="bg-slate-900/85 border border-white/15 px-3 py-1.5 rounded-xl backdrop-blur-md text-white flex items-center gap-2 shadow-lg">
           <div className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse" />
           <span className="text-xs font-bold uppercase tracking-wider">
-            Control Automático: {HOME_LINEUP_BASE[activePlayerIndex]?.role} ({HOME_LINEUP_BASE[activePlayerIndex]?.name})
+            Control Automático: {HOME_LINEUP_BASE[activePlayerIndex]?.role} (
+              {(() => {
+                if (team?.lineup && team.lineup[activePlayerIndex]) {
+                  const p = getPlayerById(team.lineup[activePlayerIndex]);
+                  if (p) return p.shortName;
+                }
+                return activePlayerIndex === 9 ? team?.playerName || 'Capitán' : HOME_LINEUP_BASE[activePlayerIndex]?.name;
+              })()}
+            )
           </span>
         </div>
       </div>
@@ -3636,84 +3594,7 @@ export default function FootballGame({
         </div>
       )}
 
-      {/* --- ON-SCREEN CONTROLS --- */}
-      {!isWalkout && matchPeriod !== 'penalties' && (
-        <>
-          <div
-            className="absolute bottom-8 left-8 w-32 h-32 rounded-full bg-slate-900/60 border-2 border-white/20 flex items-center justify-center touch-none z-20 backdrop-blur-md"
-            onMouseDown={handleJoystickTouchStart}
-            onMouseMove={handleJoystickTouchMove}
-            onMouseUp={handleJoystickTouchEnd}
-            onTouchStart={handleJoystickTouchStart}
-            onTouchMove={handleJoystickTouchMove}
-            onTouchEnd={handleJoystickTouchEnd}
-          >
-            <div
-              className="w-14 h-14 rounded-full bg-blue-500/80 border-2 border-white shadow-xl pointer-events-none transition-transform duration-75"
-              style={{
-                transform: `translate(${joystickThumb.x}px, ${joystickThumb.y}px)`,
-              }}
-            />
-          </div>
 
-          <div className="absolute bottom-8 right-6 md:right-48 flex items-center gap-3 z-20">
-            <button
-              onClick={() => {
-                const eEvent = new KeyboardEvent('keydown', { code: 'KeyE' });
-                window.dispatchEvent(eEvent);
-              }}
-              className="w-14 h-14 rounded-2xl bg-amber-600/90 border border-white/30 text-white flex flex-col items-center justify-center font-black text-[11px] shadow-xl active:scale-90 transition-transform backdrop-blur-md"
-              title="Barrida / Robar balón (E)"
-            >
-              <Zap className="w-5 h-5 text-amber-300" />
-              <span>BARRIDA (E)</span>
-            </button>
-
-            <button
-              onClick={() => {
-                const qEvent = new KeyboardEvent('keydown', { code: 'KeyQ' });
-                window.dispatchEvent(qEvent);
-              }}
-              className="w-14 h-14 rounded-2xl bg-purple-600/90 border border-white/30 text-white flex flex-col items-center justify-center font-black text-[11px] shadow-xl active:scale-90 transition-transform backdrop-blur-md"
-              title="Driblear rival (Q)"
-            >
-              <Crosshair className="w-5 h-5 text-purple-300" />
-              <span>DRIBLE (Q)</span>
-            </button>
-
-            <button
-              onClick={() => {
-                if (activeSetPieceRef.current && activeSetPieceRef.current.team === 'home') {
-                  executeSetPieceHandlerRef.current && executeSetPieceHandlerRef.current('pass');
-                } else {
-                  const mouseEvent = new MouseEvent('mousedown', { button: 2 });
-                  window.dispatchEvent(mouseEvent);
-                }
-              }}
-              className="w-16 h-16 rounded-2xl bg-emerald-600/90 border border-white/30 text-white flex flex-col items-center justify-center font-black text-xs shadow-xl active:scale-90 transition-transform backdrop-blur-md"
-              title="Pasar balón (Click Derecho)"
-            >
-              <Shield className="w-6 h-6 text-white" />
-              <span>PASAR (R-Click)</span>
-            </button>
-
-            <button
-              onClick={() => {
-                if (activeSetPieceRef.current && activeSetPieceRef.current.team === 'home') {
-                  executeSetPieceHandlerRef.current && executeSetPieceHandlerRef.current('shoot');
-                } else {
-                  actionTriggersRef.current.kick = true;
-                }
-              }}
-              className="w-18 h-18 rounded-2xl bg-gradient-to-tr from-rose-600 to-amber-500 border-2 border-white text-white flex flex-col items-center justify-center font-black text-sm shadow-2xl active:scale-90 transition-transform"
-              title="Tirar a portería (Click Izquierdo / Espacio)"
-            >
-              <Trophy className="w-6 h-6 fill-white" />
-              <span>TIRAR (L-Click)</span>
-            </button>
-          </div>
-        </>
-      )}
 
       {/* --- PAUSE MODAL --- */}
       {isPaused && (

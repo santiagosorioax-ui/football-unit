@@ -1,29 +1,39 @@
 import React from 'react';
 import fieldCardImage from '../assets/images/field_equipo_card_1791086991368.jpg';
-import { ShoppingCart, Mail, Sparkles, Coins } from 'lucide-react';
-import { TeamCustomization } from '../types/game';
+import { ShoppingCart, Mail, Sparkles, Coins, Trophy } from 'lucide-react';
+import { TeamCustomization, GlobalStats } from '../types/game';
 import { sounds } from '../utils/audio';
 
 interface HomeScreenProps {
   team: TeamCustomization;
   coins: number;
+  stats: GlobalStats;
+  unlockedAchievementsCount: number;
+  totalAchievementsCount: number;
   unreadMailCount: number;
   soundEnabled?: boolean;
   onToggleSound?: () => void;
   onPlay: () => void;
+  onTraining?: () => void;
   onOpenTeam: () => void;
   onOpenShop: () => void;
   onOpenMailbox: () => void;
+  onOpenAchievements: () => void;
 }
 
 export default function HomeScreen({
   team,
   coins,
+  stats,
+  unlockedAchievementsCount,
+  totalAchievementsCount,
   unreadMailCount,
   onPlay,
+  onTraining,
   onOpenTeam,
   onOpenShop,
   onOpenMailbox,
+  onOpenAchievements,
 }: HomeScreenProps) {
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#700000] select-none font-sans flex flex-col justify-between">
@@ -45,8 +55,8 @@ export default function HomeScreen({
         <div className="absolute -bottom-24 -right-24 w-96 h-96 rounded-full bg-[#400000] opacity-75 blur-sm" />
       </div>
 
-      {/* Top Header: Team Info & Coins & Audio */}
-      <header className="relative z-10 p-4 sm:p-6 flex items-center justify-between">
+      {/* Top Header: Team Info & Logros & Coins */}
+      <header className="relative z-10 px-4 sm:px-6 pt-4 pb-2 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div
             className="w-10 h-10 rounded-xl border-2 border-white/30 shadow-md flex items-center justify-center font-black text-sm text-white"
@@ -58,11 +68,40 @@ export default function HomeScreen({
             <h2 className="text-white font-black text-sm sm:text-base tracking-wider uppercase drop-shadow">
               {team.teamName}
             </h2>
-            <p className="text-red-200/80 text-xs">Capitán: {team.playerName}</p>
+            <div className="flex items-center gap-1.5 text-xs text-red-200/90 font-medium mt-0.5">
+              <span>Capitán: {team.playerName}</span>
+              {team.playerGrl && (
+                <span className="px-1.5 py-0.2 rounded bg-amber-400 text-slate-950 font-black text-[10px] uppercase shadow-sm">
+                  GRL {team.playerGrl}
+                </span>
+              )}
+              {team.playerPosition && (
+                <span className="px-1.5 py-0.2 rounded bg-white/20 text-white font-black text-[10px] uppercase">
+                  {team.playerPosition}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
+          {/* Button to open Logros */}
+          <button
+            onClick={() => {
+              sounds.playBounce();
+              onOpenAchievements();
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/40 hover:bg-black/60 border border-amber-400/40 text-amber-300 font-bold text-xs shadow-md backdrop-blur-md transition-all active:scale-95"
+            title="Ver Logros y Medallas"
+          >
+            <Trophy className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline uppercase">Logros:</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-amber-400/20 text-amber-300 font-black text-[11px]">
+              {unlockedAchievementsCount}/{totalAchievementsCount}
+            </span>
+          </button>
+
+          {/* Coins badge */}
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/40 border border-white/10 text-amber-400 font-bold text-xs shadow-md backdrop-blur-md">
             <Coins className="w-3.5 h-3.5" />
             <span>{coins}</span>
@@ -215,12 +254,39 @@ export default function HomeScreen({
             sounds.playBounce();
             onOpenShop();
           }}
-          className="flex items-center gap-2 sm:gap-3 px-4 sm:px-6 py-1.5 sm:py-2 rounded-xl hover:bg-black/10 transition-transform active:scale-95 group focus:outline-none"
+          className="flex items-center gap-2 sm:gap-3 px-3 sm:px-6 py-1.5 sm:py-2 rounded-xl hover:bg-black/10 transition-transform active:scale-95 group focus:outline-none"
         >
           <span className="text-xl sm:text-2xl md:text-3xl tracking-wider uppercase font-black">
             TIENDA
           </span>
           <ShoppingCart className="w-5 h-5 sm:w-6 sm:h-6 text-black transform group-hover:scale-110 transition-transform" />
+        </button>
+
+        {/* ENTRENAMIENTO Button */}
+        <button
+          onClick={() => {
+            sounds.playKick();
+            if (onTraining) onTraining();
+            else onPlay();
+          }}
+          className="flex items-center gap-2 sm:gap-3 px-3 sm:px-6 py-1.5 sm:py-2 rounded-xl hover:bg-black/10 transition-transform active:scale-95 group focus:outline-none"
+          title="Modo Entrenamiento: Practica tus tiros, pases y regates libremente"
+        >
+          <span className="text-xl sm:text-2xl md:text-3xl tracking-wider uppercase font-black">
+            ENTRENAMIENTO
+          </span>
+          {/* Icono de Pelota de Fútbol */}
+          <div className="w-6 h-6 sm:w-7 sm:h-7 text-black transform group-hover:rotate-45 transition-transform shrink-0">
+            <svg viewBox="0 0 24 24" fill="none" className="w-full h-full drop-shadow-sm">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.2" fill="#ffffff" />
+              <polygon points="12,7.5 15,9.8 14,13.8 10,13.8 9,9.8" fill="currentColor" />
+              <line x1="12" y1="7.5" x2="12" y2="2" stroke="currentColor" strokeWidth="1.8" />
+              <line x1="15" y1="9.8" x2="19.5" y2="7.5" stroke="currentColor" strokeWidth="1.8" />
+              <line x1="14" y1="13.8" x2="18" y2="18" stroke="currentColor" strokeWidth="1.8" />
+              <line x1="10" y1="13.8" x2="6" y2="18" stroke="currentColor" strokeWidth="1.8" />
+              <line x1="9" y1="9.8" x2="4.5" y2="7.5" stroke="currentColor" strokeWidth="1.8" />
+            </svg>
+          </div>
         </button>
 
         {/* BUZÓN Button (with RED NOTIFICATION DOT as requested by user) */}

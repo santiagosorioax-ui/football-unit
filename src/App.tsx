@@ -1,21 +1,37 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import LoadingScreen from './components/LoadingScreen';
 import HomeScreen from './components/HomeScreen';
 import FootballGame from './components/FootballGame';
 import TeamScreen from './components/TeamScreen';
 import MailboxModal from './components/MailboxModal';
 import ShopModal from './components/ShopModal';
-import { AppScreen, MailboxMessage, TeamCustomization } from './types/game';
+import AchievementsModal from './components/AchievementsModal';
+import AchievementNotification from './components/AchievementNotification';
+import { AppScreen, MailboxMessage, TeamCustomization, GlobalStats, Achievement } from './types/game';
+import { ACHIEVEMENTS } from './data/achievements';
+import { STARTER_TEAM_PLAYER_IDS, PlayerData } from './data/players';
 import { sounds } from './utils/audio';
 
 const DEFAULT_TEAM: TeamCustomization = {
   teamName: 'Football Unit FC',
-  playerName: 'Capitán',
-  playerNumber: 10,
+  playerName: 'J. Álvarez (Araña)',
+  playerNumber: 9,
   jerseyColor: '#2563eb',
   shortsColor: '#f8fafc',
   rivalColor: '#dc2626',
   ballStyle: 'classic',
+  playerId: 'starter_dc',
+  playerGrl: 82,
+  playerPosition: 'DC',
+  playerCountry: 'Argentina',
+};
+
+const DEFAULT_STATS: GlobalStats = {
+  matchesPlayed: 0,
+  wins: 0,
+  losses: 0,
+  ties: 0,
+  totalGoals: 0,
 };
 
 const INITIAL_MESSAGES: MailboxMessage[] = [
@@ -33,8 +49,12 @@ const INITIAL_MESSAGES: MailboxMessage[] = [
 export default function App() {
   const [screen, setScreen] = useState<AppScreen>('loading');
   const [loadingDestination, setLoadingDestination] = useState<AppScreen>('home');
+  const [gameMode, setGameMode] = useState<'match' | 'training'>('match');
   const [isMailboxOpen, setIsMailboxOpen] = useState(false);
   const [isShopOpen, setIsShopOpen] = useState(false);
+  const [isAchievementsOpen, setIsAchievementsOpen] = useState(false);
+  const [activeAchievementNotification, setActiveAchievementNotification] = useState<Achievement | null>(null);
+  const achievementQueueRef = useRef<Achievement[]>([]);
   const [soundEnabled, setSoundEnabled] = useState(true);
 
   // Persistent State
@@ -54,6 +74,33 @@ export default function App() {
     } catch {
       return 50;
     }
+  });
+
+  const [stats, setStats] = useState<GlobalStats>(() => {
+    try {
+      const saved = localStorage.getItem('fu_stats');
+      return saved ? JSON.parse(saved) : DEFAULT_STATS;
+    } catch {
+      return DEFAULT_STATS;
+    }
+  });
+
+  const [unlockedAchievementIds, setUnlockedAchievementIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('fu_achievements');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Unlocked Players: Starts with the last 11 World Cup players (starter squad)
+  const [unlockedPlayerIds, setUnlockedPlayerIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('fu_unlocked_players');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return STARTER_TEAM_PLAYER_IDS;
   });
 
   const [unlockedItems, setUnlockedItems] = useState<string[]>(() => {
@@ -82,6 +129,18 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('fu_coins', String(coins));
   }, [coins]);
+
+  useEffect(() => {
+    localStorage.setItem('fu_stats', JSON.stringify(stats));
+  }, [stats]);
+
+  useEffect(() => {
+    localStorage.setItem('fu_achievements', JSON.stringify(unlockedAchievementIds));
+  }, [unlockedAchievementIds]);
+
+  useEffect(() => {
+    localStorage.setItem('fu_unlocked_players', JSON.stringify(unlockedPlayerIds));
+  }, [unlockedPlayerIds]);
 
   useEffect(() => {
     localStorage.setItem('fu_items', JSON.stringify(unlockedItems));
@@ -124,8 +183,84 @@ export default function App() {
     sounds.playCheer();
   };
 
+  // Achievements notification dispatcher
+  const showNextAchievement = () => {
+    if (achievementQueueRef.current.length > 0) {
+      const next = achievementQueueRef.current.shift()!;
+      setActiveAchievementNotification(next);
+    } else {
+      setActiveAchievementNotification(null);
+    }
+  };
+
+  const checkAchievementsWithStats = (updatedStats: GlobalStats, currentUnlocked: string[]) => {
+    const newlyUnlocked: Achievement[] = [];
+    let addedCoins = 0;
+
+    for (const ach of ACHIEVEMENTS) {
+      if (currentUnlocked.includes(ach.id)) continue;
+
+      let progress = 0;
+      if (ach.category === 'wins') progress = updatedStats.wins;
+      else if (ach.category === 'goals') progress = updatedStats.totalGoals;
+      else if (ach.category === 'matches') progress = updatedStats.matchesPlayed;
+
+      if (progress >= ach.requirement) {
+        newlyUnlocked.push(ach);
+        addedCoins += ach.rewardCoins;
+      }
+    }
+
+    if (newlyUnlocked.length > 0) {
+      const newIds = newlyUnlocked.map((a) => a.id);
+      setUnlockedAchievementIds((prev) => [...prev, ...newIds]);
+      setCoins((c) => c + addedCoins);
+      sounds.playCheer();
+
+      // Enqueue notification for display
+      achievementQueueRef.current.push(...newlyUnlocked);
+      if (!activeAchievementNotification) {
+        showNextAchievement();
+      }
+
+      // Add a commemorative mailbox entry
+      newlyUnlocked.forEach((ach) => {
+        addMailboxMessage({
+          type: 'win',
+          title: `¡Logro Desbloqueado: ${ach.title}!`,
+          body: `¡Felicidades! Has completado el logro "${ach.title}" (${ach.description}). Has recibido automáticamente +${ach.rewardCoins} monedas.`,
+          read: false,
+        });
+      });
+    }
+  };
+
+  // Real-time Goal Scored Handler
+  const handleGoalScored = () => {
+    setStats((prev) => {
+      const updated: GlobalStats = {
+        ...prev,
+        totalGoals: prev.totalGoals + 1,
+      };
+      checkAchievementsWithStats(updated, unlockedAchievementIds);
+      return updated;
+    });
+  };
+
   // Match Outcome Handlers
   const handleMatchComplete = (result: 'win' | 'loss' | 'tie', pScore: number, aScore: number) => {
+    setStats((prev) => {
+      const updated: GlobalStats = {
+        ...prev,
+        matchesPlayed: prev.matchesPlayed + 1,
+        wins: result === 'win' ? prev.wins + 1 : prev.wins,
+        losses: result === 'loss' ? prev.losses + 1 : prev.losses,
+        ties: result === 'tie' ? prev.ties + 1 : prev.ties,
+      };
+      checkAchievementsWithStats(updated, unlockedAchievementIds);
+      return updated;
+    });
+
     if (result === 'win') {
       const reward = 60;
       setCoins((c) => c + reward);
@@ -155,7 +290,17 @@ export default function App() {
   };
 
   const handleExitMatch = (abandoned: boolean, pScore: number, aScore: number) => {
-    if (abandoned) {
+    if (abandoned && gameMode === 'match') {
+      setStats((prev) => {
+        const updated: GlobalStats = {
+          ...prev,
+          matchesPlayed: prev.matchesPlayed + 1,
+          losses: prev.losses + 1,
+        };
+        checkAchievementsWithStats(updated, unlockedAchievementIds);
+        return updated;
+      });
+
       addMailboxMessage({
         type: 'abandon',
         title: 'Partido Abandonado',
@@ -166,12 +311,19 @@ export default function App() {
     setScreen('home');
   };
 
-  // Shop Handlers
-  const handleBuyItem = (itemId: string, price: number) => {
-    if (coins >= price && !unlockedItems.includes(itemId)) {
+  // Player Shop Purchase Handler
+  const handleBuyPlayer = (player: PlayerData, price: number) => {
+    if (coins >= price && !unlockedPlayerIds.includes(player.id)) {
       setCoins((c) => c - price);
-      setUnlockedItems((items) => [...items, itemId]);
+      setUnlockedPlayerIds((prev) => [...prev, player.id]);
       sounds.playCheer();
+
+      addMailboxMessage({
+        type: 'win',
+        title: `¡Fichaje Estrella: ${player.name}!`,
+        body: `Has fichado a ${player.name} (${player.shortName}) con GRL ${player.grl} por ${price} monedas. ¡Ya puedes alinearlo en tu equipo!`,
+        read: false,
+      });
     }
   };
 
@@ -194,14 +346,24 @@ export default function App() {
         <HomeScreen
           team={team}
           coins={coins}
+          stats={stats}
+          unlockedAchievementsCount={unlockedAchievementIds.length}
+          totalAchievementsCount={ACHIEVEMENTS.length}
           unreadMailCount={unreadMailCount}
           onPlay={() => {
+            setGameMode('match');
+            setLoadingDestination('match');
+            setScreen('loading');
+          }}
+          onTraining={() => {
+            setGameMode('training');
             setLoadingDestination('match');
             setScreen('loading');
           }}
           onOpenTeam={() => setScreen('team')}
           onOpenShop={() => setIsShopOpen(true)}
           onOpenMailbox={() => setIsMailboxOpen(true)}
+          onOpenAchievements={() => setIsAchievementsOpen(true)}
         />
       )}
 
@@ -209,8 +371,10 @@ export default function App() {
       {screen === 'team' && (
         <TeamScreen
           customization={team}
+          unlockedPlayerIds={unlockedPlayerIds}
           onSave={(updated) => setTeam(updated)}
           onBack={() => setScreen('home')}
+          onOpenShop={() => setIsShopOpen(true)}
         />
       )}
 
@@ -218,12 +382,14 @@ export default function App() {
       {screen === 'match' && (
         <FootballGame
           team={team}
+          mode={gameMode}
           onShowLoading={() => {
             setLoadingDestination('home');
             setScreen('loading');
           }}
           onExitToMenu={handleExitMatch}
           onMatchComplete={handleMatchComplete}
+          onGoalScored={handleGoalScored}
         />
       )}
 
@@ -237,13 +403,30 @@ export default function App() {
         onClaimReward={handleClaimReward}
       />
 
-      {/* Shop Modal */}
+      {/* Shop Fullscreen */}
       <ShopModal
-        isOpen={isShopOpen}
+        isOpen={isShopOpen || screen === 'shop'}
         coins={coins}
-        unlockedItems={unlockedItems}
-        onClose={() => setIsShopOpen(false)}
-        onBuyItem={handleBuyItem}
+        unlockedPlayerIds={unlockedPlayerIds}
+        onClose={() => {
+          setIsShopOpen(false);
+          if (screen === 'shop') setScreen('home');
+        }}
+        onBuyPlayer={handleBuyPlayer}
+      />
+
+      {/* Achievements Modal */}
+      <AchievementsModal
+        isOpen={isAchievementsOpen}
+        unlockedAchievementIds={unlockedAchievementIds}
+        stats={stats}
+        onClose={() => setIsAchievementsOpen(false)}
+      />
+
+      {/* Achievement Notification Banner */}
+      <AchievementNotification
+        achievement={activeAchievementNotification}
+        onDismiss={showNextAchievement}
       />
     </main>
   );
