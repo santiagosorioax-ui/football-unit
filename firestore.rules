@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Test connection document for verifying Firestore client connectivity
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // User profile and game save state: Strictly isolated per authenticated owner
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+      allow create: if isOwner(userId) && isValidId(userId) &&
+        request.resource.data.userId == request.auth.uid;
+      allow update: if isOwner(userId) && isValidId(userId) &&
+        request.resource.data.userId == request.auth.uid;
+      allow delete: if isOwner(userId) && isValidId(userId);
+    }
+  }
+}

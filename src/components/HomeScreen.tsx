@@ -1,6 +1,7 @@
 import React from 'react';
+import { User } from 'firebase/auth';
 import fieldCardImage from '../assets/images/field_equipo_card_1791086991368.jpg';
-import { ShoppingCart, Mail, Sparkles, Coins, Trophy } from 'lucide-react';
+import { ShoppingCart, Mail, Sparkles, Coins, Trophy, LogIn, LogOut, UserCheck } from 'lucide-react';
 import { TeamCustomization, GlobalStats } from '../types/game';
 import { sounds } from '../utils/audio';
 
@@ -11,6 +12,7 @@ interface HomeScreenProps {
   unlockedAchievementsCount: number;
   totalAchievementsCount: number;
   unreadMailCount: number;
+  currentUser?: User | null;
   soundEnabled?: boolean;
   onToggleSound?: () => void;
   onPlay: () => void;
@@ -19,6 +21,8 @@ interface HomeScreenProps {
   onOpenShop: () => void;
   onOpenMailbox: () => void;
   onOpenAchievements: () => void;
+  onOpenAuth?: () => void;
+  onSignOut?: () => void;
 }
 
 export default function HomeScreen({
@@ -28,12 +32,15 @@ export default function HomeScreen({
   unlockedAchievementsCount,
   totalAchievementsCount,
   unreadMailCount,
+  currentUser,
   onPlay,
   onTraining,
   onOpenTeam,
   onOpenShop,
   onOpenMailbox,
   onOpenAchievements,
+  onOpenAuth,
+  onSignOut,
 }: HomeScreenProps) {
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#700000] select-none font-sans flex flex-col justify-between">
@@ -106,6 +113,52 @@ export default function HomeScreen({
             <Coins className="w-3.5 h-3.5" />
             <span>{coins}</span>
           </div>
+
+          {/* User Account Pill / Iniciar Sesión button */}
+          {currentUser ? (
+            <div className="flex items-center gap-2 pl-2 pr-1 py-1 rounded-xl bg-black/40 border border-emerald-500/40 text-white text-xs shadow-md backdrop-blur-md">
+              {currentUser.photoURL ? (
+                <img
+                  src={currentUser.photoURL}
+                  alt={currentUser.displayName || 'Usuario'}
+                  className="w-5 h-5 rounded-full border border-emerald-400 object-cover"
+                />
+              ) : (
+                <div className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-black">
+                  {currentUser.displayName?.[0] || 'U'}
+                </div>
+              )}
+              <span className="hidden md:inline font-bold text-emerald-300 max-w-[100px] truncate">
+                {currentUser.displayName || 'Entrenador'}
+              </span>
+              {onSignOut && (
+                <button
+                  onClick={() => {
+                    sounds.playBounce();
+                    onSignOut();
+                  }}
+                  className="p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-rose-300 transition-colors"
+                  title="Cerrar Sesión"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          ) : (
+            onOpenAuth && (
+              <button
+                onClick={() => {
+                  sounds.playBounce();
+                  onOpenAuth();
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600/80 hover:bg-blue-600 border border-blue-400/40 text-white font-bold text-xs shadow-md backdrop-blur-md transition-all active:scale-95"
+                title="Iniciar sesión con Google para guardar progreso"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Iniciar Sesión</span>
+              </button>
+            )
+          )}
         </div>
       </header>
 

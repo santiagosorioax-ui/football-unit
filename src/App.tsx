@@ -1,12 +1,23 @@
 import { useState, useEffect, useRef } from 'react';
+import { User } from 'firebase/auth';
+import {
+  auth,
+  onAuthStateChanged,
+  testConnection,
+  saveUserDataToFirestore,
+  loadUserDataFromFirestore,
+  signOutUser,
+} from './lib/firebase';
+import AuthPromptScreen from './components/AuthPromptScreen';
 import LoadingScreen from './components/LoadingScreen';
 import HomeScreen from './components/HomeScreen';
-import FootballGame from './components/FootballGame';
+import FootballGame, { MatchPeriod } from './components/FootballGame';
 import TeamScreen from './components/TeamScreen';
 import MailboxModal from './components/MailboxModal';
 import ShopModal from './components/ShopModal';
 import AchievementsModal from './components/AchievementsModal';
 import AchievementNotification from './components/AchievementNotification';
+import TrainingModal from './components/TrainingModal';
 import { AppScreen, MailboxMessage, TeamCustomization, GlobalStats, Achievement } from './types/game';
 import { ACHIEVEMENTS } from './data/achievements';
 import { STARTER_TEAM_PLAYER_IDS, PlayerData } from './data/players';
@@ -47,9 +58,13 @@ const INITIAL_MESSAGES: MailboxMessage[] = [
 ];
 
 export default function App() {
-  const [screen, setScreen] = useState<AppScreen>('loading');
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [screen, setScreen] = useState<AppScreen>('auth');
   const [loadingDestination, setLoadingDestination] = useState<AppScreen>('home');
   const [gameMode, setGameMode] = useState<'match' | 'training'>('match');
+  const [trainingDrill, setTrainingDrill] = useState<string>('tiro_libre');
+  const [gameInitialPeriod, setGameInitialPeriod] = useState<MatchPeriod | undefined>(undefined);
+  const [isTrainingOpen, setIsTrainingOpen] = useState(false);
   const [isMailboxOpen, setIsMailboxOpen] = useState(false);
   const [isShopOpen, setIsShopOpen] = useState(false);
   const [isAchievementsOpen, setIsAchievementsOpen] = useState(false);
@@ -149,6 +164,46 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('fu_mailbox', JSON.stringify(messages));
   }, [messages]);
+
+  // Firebase Auth & Cloud Firestore Sync Initialization
+  useEffect(() => {
+    testConnection();
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      if (user) {
+        try {
+          const cloudData = await loadUserDataFromFirestore(user.uid);
+          if (cloudData) {
+            if (typeof cloudData.coins === 'number') setCoins(cloudData.coins);
+            if (cloudData.team) setTeam(cloudData.team);
+            if (cloudData.stats) setStats(cloudData.stats);
+            if (Array.isArray(cloudData.unlockedPlayerIds)) setUnlockedPlayerIds(cloudData.unlockedPlayerIds);
+            if (Array.isArray(cloudData.unlockedAchievementIds)) setUnlockedAchievementIds(cloudData.unlockedAchievementIds);
+          }
+        } catch (err) {
+          console.error('Error fetching cloud user profile:', err);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Save to Firestore when currentUser is active and data changes
+  useEffect(() => {
+    if (currentUser) {
+      saveUserDataToFirestore(currentUser.uid, {
+        userId: currentUser.uid,
+        email: currentUser.email,
+        displayName: currentUser.displayName,
+        photoURL: currentUser.photoURL,
+        coins,
+        stats,
+        team,
+        unlockedPlayerIds,
+        unlockedAchievementIds,
+      }).catch((err) => console.error('Failed to sync to Firestore:', err));
+    }
+  }, [currentUser, coins, stats, team, unlockedPlayerIds, unlockedAchievementIds]);
 
   // Audio Sync
   const toggleSound = () => {
@@ -262,7 +317,7 @@ export default function App() {
     });
 
     if (result === 'win') {
-      const reward = 60;
+      const reward = 100;
       setCoins((c) => c + reward);
       addMailboxMessage({
         type: 'win',
@@ -327,14 +382,88 @@ export default function App() {
     }
   };
 
+  // Training reward & 3D launch handlers (+10 coins)
+  const handleRewardTrainingCoins = (amount: number, reason: string) => {
+    setCoins((c) => c + amount);
+    sounds.playCheer();
+    addMailboxMessage({
+      type: 'system',
+      title: `¡Entrenamiento Completado: +${amount} Monedas!`,
+      body: `Has completado la sesión técnica de ${reason}. Se han acreditado +${amount} monedas a tu saldo oficial.`,
+      read: false,
+    });
+  };
+
+  const handleStart3DPractice = (drillType: string) => {
+    setIsTrainingOpen(false);
+    setGameMode('training');
+    setTrainingDrill(drillType);
+    setGameInitialPeriod(undefined);
+    setLoadingDestination('match');
+    setScreen('loading');
+  };
+
+  const handleContinueWithAuth = async (user: User) => {
+    setCurrentUser(user);
+    try {
+      const cloudData = await loadUserDataFromFirestore(user.uid);
+      if (cloudData) {
+        if (typeof cloudData.coins === 'number') setCoins(cloudData.coins);
+        if (cloudData.team) setTeam(cloudData.team);
+        if (cloudData.stats) setStats(cloudData.stats);
+        if (Array.isArray(cloudData.unlockedPlayerIds)) setUnlockedPlayerIds(cloudData.unlockedPlayerIds);
+        if (Array.isArray(cloudData.unlockedAchievementIds)) setUnlockedAchievementIds(cloudData.unlockedAchievementIds);
+      } else {
+        await saveUserDataToFirestore(user.uid, {
+          userId: user.uid,
+          email: user.email,
+          displayName: user.displayName,
+          photoURL: user.photoURL,
+          coins,
+          stats,
+          team,
+          unlockedPlayerIds,
+          unlockedAchievementIds,
+        });
+      }
+    } catch (err) {
+      console.error('Error syncing on auth continue:', err);
+    }
+    setLoadingDestination('home');
+    setScreen('loading');
+  };
+
+  const handleContinueAsGuest = () => {
+    setLoadingDestination('home');
+    setScreen('loading');
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOutUser();
+      setCurrentUser(null);
+    } catch (err) {
+      console.error('Error during sign out:', err);
+    }
+  };
+
   const unreadMailCount = messages.filter((m) => !m.read).length;
 
   return (
     <main className="w-screen h-screen overflow-hidden bg-black select-none">
+      {/* 0. Auth Choice Screen (Antes de la pantalla de carga) */}
+      {screen === 'auth' && (
+        <AuthPromptScreen
+          currentUser={currentUser}
+          onContinueWithAuth={handleContinueWithAuth}
+          onContinueAsGuest={handleContinueAsGuest}
+        />
+      )}
+
       {/* 1. Loading Screen (Pantalla de Carga) */}
       {screen === 'loading' && (
         <LoadingScreen
-          durationSeconds={loadingDestination === 'home' ? 8 : 4}
+          durationSeconds={gameMode === 'training' ? 2 : loadingDestination === 'home' ? 8 : 4}
           onComplete={() => {
             setScreen(loadingDestination);
           }}
@@ -350,15 +479,17 @@ export default function App() {
           unlockedAchievementsCount={unlockedAchievementIds.length}
           totalAchievementsCount={ACHIEVEMENTS.length}
           unreadMailCount={unreadMailCount}
+          currentUser={currentUser}
+          onOpenAuth={() => setScreen('auth')}
+          onSignOut={handleSignOut}
           onPlay={() => {
             setGameMode('match');
+            setGameInitialPeriod(undefined);
             setLoadingDestination('match');
             setScreen('loading');
           }}
           onTraining={() => {
-            setGameMode('training');
-            setLoadingDestination('match');
-            setScreen('loading');
+            setIsTrainingOpen(true);
           }}
           onOpenTeam={() => setScreen('team')}
           onOpenShop={() => setIsShopOpen(true)}
@@ -383,6 +514,8 @@ export default function App() {
         <FootballGame
           team={team}
           mode={gameMode}
+          trainingDrill={trainingDrill}
+          initialPeriod={gameInitialPeriod}
           onShowLoading={() => {
             setLoadingDestination('home');
             setScreen('loading');
@@ -390,8 +523,21 @@ export default function App() {
           onExitToMenu={handleExitMatch}
           onMatchComplete={handleMatchComplete}
           onGoalScored={handleGoalScored}
+          onTrainingReward={handleRewardTrainingCoins}
+          onSwitchTrainingDrill={(drill) => setTrainingDrill(drill)}
+          onOpenTrainingMenu={() => setIsTrainingOpen(true)}
         />
       )}
+
+      {/* Training Modal */}
+      <TrainingModal
+        isOpen={isTrainingOpen}
+        coins={coins}
+        team={team}
+        onClose={() => setIsTrainingOpen(false)}
+        onRewardCoins={handleRewardTrainingCoins}
+        onStart3DPractice={handleStart3DPractice}
+      />
 
       {/* Mailbox Modal */}
       <MailboxModal

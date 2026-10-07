@@ -14,6 +14,15 @@ import {
   Flag,
   CornerDownRight,
   ArrowRight,
+  Sparkles,
+  Coins,
+  Zap,
+  RefreshCw,
+  CheckCircle2,
+  Flame,
+  Target,
+  X,
+  ChevronRight,
 } from 'lucide-react';
 import { sounds } from '../utils/audio';
 import { createSoccerBallTexture, createGrassTexture } from '../utils/textures';
@@ -27,10 +36,15 @@ export type MatchPeriod = '1st_half' | 'half_time' | '2nd_half' | 'extra_time' |
 interface FootballGameProps {
   team?: TeamCustomization;
   mode?: 'match' | 'training';
+  trainingDrill?: string;
+  initialPeriod?: MatchPeriod;
   onShowLoading?: () => void;
   onExitToMenu?: (abandoned: boolean, pScore: number, aScore: number) => void;
   onMatchComplete?: (result: 'win' | 'loss' | 'tie', pScore: number, aScore: number) => void;
   onGoalScored?: () => void;
+  onTrainingReward?: (amount: number, reason: string) => void;
+  onSwitchTrainingDrill?: (drill: string) => void;
+  onOpenTrainingMenu?: () => void;
 }
 
 // 11v11 Lineup Definitions (4-3-3 System on Colossal 175m x 110m Monumental Pitch)
@@ -75,10 +89,15 @@ const AWAY_LINEUP_BASE: PlayerRole[] = [
 export default function FootballGame({
   team,
   mode = 'match',
+  trainingDrill,
+  initialPeriod,
   onShowLoading,
   onExitToMenu,
   onMatchComplete,
   onGoalScored,
+  onTrainingReward,
+  onSwitchTrainingDrill,
+  onOpenTrainingMenu,
 }: FootballGameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const radarCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -86,10 +105,34 @@ export default function FootballGame({
   // Score & Time Management
   const [playerScore, setPlayerScore] = useState(0);
   const [aiScore, setAiScore] = useState(0);
-  const [matchPeriod, setMatchPeriod] = useState<MatchPeriod>('1st_half');
+  const [matchPeriod, setMatchPeriod] = useState<MatchPeriod>(initialPeriod || '1st_half');
   const [timeRemaining, setTimeRemaining] = useState(120); // 2 minutes (120s) per half/extra time
   const [isPaused, setIsPaused] = useState(false);
   const [gameOver, setGameOver] = useState(false);
+
+  // Active Training Drill State
+  const [currentDrill, setCurrentDrill] = useState<string>(() => {
+    if (!trainingDrill) return 'tiro_libre';
+    return trainingDrill.replace('drill_', '');
+  });
+  const [trainingCoinsEarned, setTrainingCoinsEarned] = useState<number>(0);
+  const [trainingGoalsCount, setTrainingGoalsCount] = useState<number>(0);
+  const [trainingDrillSelectorOpen, setTrainingDrillSelectorOpen] = useState(false);
+  const [trainingRewardNotification, setTrainingRewardNotification] = useState<{
+    title: string;
+    subtitle: string;
+    coins: number;
+  } | null>(null);
+
+  const currentDrillRef = useRef(currentDrill);
+  const onTrainingRewardRef = useRef(onTrainingReward);
+  const onSwitchTrainingDrillRef = useRef(onSwitchTrainingDrill);
+  const setupTrainingDrillRef = useRef<((drillId?: string) => void) | null>(null);
+  const executeTrainingActionRef = useRef<((actionKey: string) => void) | null>(null);
+
+  useEffect(() => {
+    onSwitchTrainingDrillRef.current = onSwitchTrainingDrill;
+  }, [onSwitchTrainingDrill]);
 
   // Announcements & Notices
   const [goalAnnouncement, setGoalAnnouncement] = useState<{ scorer: 'player' | 'ai'; text: string } | null>(null);
@@ -108,7 +151,7 @@ export default function FootballGame({
   // Camera & Walkout Ceremony
   const [cameraMode, setCameraMode] = useState<CameraMode>('tv');
   const [showHelp, setShowHelp] = useState(false);
-  const [isWalkout, setIsWalkout] = useState(true);
+  const [isWalkout, setIsWalkout] = useState(initialPeriod || mode === 'training' ? false : true);
   const [walkoutStep, setWalkoutStep] = useState<'tunnel' | 'handshake' | 'pause' | 'positions'>('tunnel');
   const walkoutProgressBarRef = useRef<HTMLDivElement>(null);
   const currentWalkoutStepRef = useRef<'tunnel' | 'handshake' | 'pause' | 'positions'>('tunnel');
@@ -118,6 +161,25 @@ export default function FootballGame({
   const playerScoreRef = useRef(0);
   const aiScoreRef = useRef(0);
   const timeRemainingRef = useRef(120);
+
+  useEffect(() => {
+    currentDrillRef.current = currentDrill;
+  }, [currentDrill]);
+
+  useEffect(() => {
+    onTrainingRewardRef.current = onTrainingReward;
+  }, [onTrainingReward]);
+
+  useEffect(() => {
+    if (trainingDrill) {
+      const clean = trainingDrill.replace('drill_', '');
+      setCurrentDrill(clean);
+      currentDrillRef.current = clean;
+      if (setupTrainingDrillRef.current) {
+        setupTrainingDrillRef.current(clean);
+      }
+    }
+  }, [trainingDrill]);
 
   useEffect(() => {
     playerScoreRef.current = playerScore;
@@ -154,8 +216,8 @@ export default function FootballGame({
   // Loop & Sync Refs
   const isPausedRef = useRef(false);
   const gameOverRef = useRef(false);
-  const isWalkoutRef = useRef(true);
-  const matchPeriodRef = useRef<MatchPeriod>('1st_half');
+  const isWalkoutRef = useRef(initialPeriod || mode === 'training' ? false : true);
+  const matchPeriodRef = useRef<MatchPeriod>(initialPeriod || '1st_half');
   const cameraModeRef = useRef<CameraMode>('tv');
   const activePlayerIndexRef = useRef(9);
   const goalCooldownRef = useRef(false);
@@ -950,18 +1012,154 @@ export default function FootballGame({
       knockdownTimer: number;
     }
 
-    const playerTorsoGeom = new THREE.CylinderGeometry(0.55, 0.45, 1.2, 16);
-    const playerHeadGeom = new THREE.SphereGeometry(0.42, 16, 16);
-    const playerHairGeom = new THREE.SphereGeometry(0.45, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.55);
-    const playerShortsGeom = new THREE.CylinderGeometry(0.48, 0.52, 0.6, 16);
-    const playerLimbGeom = new THREE.CylinderGeometry(0.18, 0.16, 0.9, 12);
-    const playerBootGeom = new THREE.BoxGeometry(0.24, 0.2, 0.45);
-    const playerGloveGeom = new THREE.BoxGeometry(0.35, 0.35, 0.35);
+    // --- PROCEDURAL TEXTURES FOR REALISTIC PLAYERS ---
+    const jerseyNumberTextureCache = new Map<string, THREE.CanvasTexture>();
+    const getJerseyNumberTexture = (num: number | string, color: string = '#ffffff'): THREE.CanvasTexture => {
+      const key = `${num}_${color}`;
+      if (jerseyNumberTextureCache.has(key)) return jerseyNumberTextureCache.get(key)!;
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d')!;
+      ctx.clearRect(0, 0, 256, 256);
+      ctx.font = '900 170px "Impact", "Arial Black", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = color;
+      ctx.shadowColor = 'rgba(0,0,0,0.7)';
+      ctx.shadowBlur = 10;
+      ctx.shadowOffsetX = 3;
+      ctx.shadowOffsetY = 4;
+      ctx.fillText(String(num), 128, 130);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.needsUpdate = true;
+      jerseyNumberTextureCache.set(key, tex);
+      return tex;
+    };
 
-    const skinMat = new THREE.MeshStandardMaterial({ color: 0xe0ac69, roughness: 0.6 });
-    const hairMat = new THREE.MeshStandardMaterial({ color: 0x271e18, roughness: 0.8 });
-    const bootMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.4 });
-    const gloveMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.3 });
+    const crestCanvas = document.createElement('canvas');
+    crestCanvas.width = 128;
+    crestCanvas.height = 128;
+    const crestCtx = crestCanvas.getContext('2d')!;
+    crestCtx.beginPath();
+    crestCtx.moveTo(64, 12);
+    crestCtx.lineTo(112, 34);
+    crestCtx.lineTo(102, 92);
+    crestCtx.lineTo(64, 120);
+    crestCtx.lineTo(26, 92);
+    crestCtx.lineTo(16, 34);
+    crestCtx.closePath();
+    crestCtx.fillStyle = '#f59e0b';
+    crestCtx.fill();
+    crestCtx.lineWidth = 6;
+    crestCtx.strokeStyle = '#ffffff';
+    crestCtx.stroke();
+    crestCtx.fillStyle = '#ffffff';
+    crestCtx.font = 'bold 48px sans-serif';
+    crestCtx.textAlign = 'center';
+    crestCtx.textBaseline = 'middle';
+    crestCtx.fillText('★', 64, 66);
+    const crestTexture = new THREE.CanvasTexture(crestCanvas);
+
+    const shadowCanvas = document.createElement('canvas');
+    shadowCanvas.width = 128;
+    shadowCanvas.height = 128;
+    const shadowCtx = shadowCanvas.getContext('2d')!;
+    const shadowGrad = shadowCtx.createRadialGradient(64, 64, 10, 64, 64, 60);
+    shadowGrad.addColorStop(0, 'rgba(0,0,0,0.45)');
+    shadowGrad.addColorStop(0.5, 'rgba(0,0,0,0.22)');
+    shadowGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    shadowCtx.fillStyle = shadowGrad;
+    shadowCtx.fillRect(0, 0, 128, 128);
+    const shadowTexture = new THREE.CanvasTexture(shadowCanvas);
+
+    const gloveCanvas = document.createElement('canvas');
+    gloveCanvas.width = 128;
+    gloveCanvas.height = 128;
+    const gloveCtx = gloveCanvas.getContext('2d')!;
+    gloveCtx.fillStyle = '#10b981';
+    gloveCtx.fillRect(0, 0, 128, 128);
+    gloveCtx.fillStyle = '#065f46';
+    for (let y = 14; y < 128; y += 18) {
+      gloveCtx.fillRect(8, y, 112, 4);
+    }
+    const gloveTexture = new THREE.CanvasTexture(gloveCanvas);
+
+    // Natural Skin and Hair Tone Palettes for realistic human variation
+    const SKIN_PALETTE = [
+      0xf6d7be, // Light peach
+      0xe7bc8e, // Mediterranean
+      0xd99a64, // Golden Tan
+      0xb97d4c, // Bronze
+      0x8b532d, // Warm brown
+      0x55321a, // Deep espresso
+    ];
+
+    const HAIR_PALETTE = [
+      0x1c1917, // Jet black
+      0x2c1d13, // Dark brown
+      0x452a18, // Chestnut
+      0x713f12, // Warm brown
+      0xc28f38, // Dirty blonde
+      0x1e293b, // Deep black
+    ];
+
+    // Shared Reusable Geometries
+    const chestGeom = new THREE.CylinderGeometry(0.54, 0.46, 0.74, 18);
+    const waistGeom = new THREE.CylinderGeometry(0.46, 0.41, 0.52, 18);
+    const neckGeom = new THREE.CylinderGeometry(0.18, 0.20, 0.32, 16);
+    const collarGeom = new THREE.TorusGeometry(0.22, 0.042, 8, 20);
+    const badgeGeom = new THREE.PlaneGeometry(0.18, 0.18);
+    const numberPlateGeom = new THREE.PlaneGeometry(0.44, 0.44);
+    const shadowDiscGeom = new THREE.PlaneGeometry(1.5, 1.5);
+
+    const headGeom = new THREE.SphereGeometry(0.36, 20, 20);
+    const jawGeom = new THREE.BoxGeometry(0.30, 0.20, 0.26);
+    const earGeom = new THREE.SphereGeometry(0.08, 8, 8);
+    const noseGeom = new THREE.ConeGeometry(0.065, 0.16, 4);
+    const eyeWhiteGeom = new THREE.SphereGeometry(0.05, 8, 8);
+    const eyeIrisGeom = new THREE.SphereGeometry(0.026, 8, 8);
+    const eyebrowGeom = new THREE.BoxGeometry(0.11, 0.035, 0.05);
+    const mouthGeom = new THREE.BoxGeometry(0.13, 0.022, 0.035);
+    const hairCrownGeom = new THREE.SphereGeometry(0.38, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.50);
+    const hairFadeGeom = new THREE.CylinderGeometry(0.38, 0.36, 0.28, 16, 1, true);
+
+    const shortsGeom = new THREE.CylinderGeometry(0.44, 0.48, 0.56, 16);
+    const waistbandGeom = new THREE.TorusGeometry(0.43, 0.038, 8, 20);
+    const stripeGeom = new THREE.BoxGeometry(0.04, 0.52, 0.06);
+
+    const thighGeom = new THREE.CylinderGeometry(0.19, 0.16, 0.50, 14);
+    const kneecapGeom = new THREE.SphereGeometry(0.14, 10, 10);
+    const sockGeom = new THREE.CylinderGeometry(0.165, 0.13, 0.54, 14);
+    const sockCuffGeom = new THREE.TorusGeometry(0.16, 0.035, 8, 16);
+    const bootUpperGeom = new THREE.BoxGeometry(0.20, 0.16, 0.44);
+    const bootLacesGeom = new THREE.BoxGeometry(0.09, 0.035, 0.26);
+    const bootSoleGeom = new THREE.BoxGeometry(0.21, 0.03, 0.45);
+    const cleatStudGeom = new THREE.CylinderGeometry(0.025, 0.02, 0.04, 6);
+
+    const sleeveGeom = new THREE.CylinderGeometry(0.19, 0.17, 0.36, 12);
+    const sleeveCuffGeom = new THREE.TorusGeometry(0.18, 0.03, 8, 16);
+    const forearmGeom = new THREE.CylinderGeometry(0.145, 0.12, 0.44, 12);
+    const wristTapeGeom = new THREE.CylinderGeometry(0.13, 0.13, 0.08, 12);
+    const palmGeom = new THREE.BoxGeometry(0.13, 0.16, 0.07);
+    const thumbGeom = new THREE.BoxGeometry(0.05, 0.08, 0.05);
+    const fingerGeom = new THREE.BoxGeometry(0.12, 0.08, 0.06);
+
+    const gkGloveGeom = new THREE.BoxGeometry(0.28, 0.32, 0.14);
+    const gkBackhandGeom = new THREE.BoxGeometry(0.29, 0.30, 0.06);
+
+    // Common materials
+    const whiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
+    const eyeIrisMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.2 });
+    const lipMat = new THREE.MeshStandardMaterial({ color: 0xb96e62, roughness: 0.8 });
+    const bootUpperMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.4 });
+    const bootSpeedMat = new THREE.MeshStandardMaterial({ color: 0x84cc16, roughness: 0.2 }); // Neon Volt speed stripe
+    const bootSoleMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.2, metalness: 0.3 });
+    const wristTapeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+    const shadowMat = new THREE.MeshBasicMaterial({ map: shadowTexture, transparent: true, opacity: 0.65, depthWrite: false });
+    const crestMat = new THREE.MeshBasicMaterial({ map: crestTexture, transparent: true });
+    const gkGlovePalmMat = new THREE.MeshStandardMaterial({ map: gloveTexture, roughness: 0.3 });
+    const gkGloveBackMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.4 }); // Electric Cyan backhand
 
     const createArticulatedPlayer = (
       kitColor: string,
@@ -970,90 +1168,301 @@ export default function FootballGame({
       isCaptain: boolean = false,
       baseX: number = 0,
       baseZ: number = 0,
-      role: string = 'JUG'
+      role: string = 'JUG',
+      playerNumber: number = 10,
+      playerIndex: number = 0,
+      playerName: string = 'Jugador',
+      isHomeTeam: boolean = true
     ): ArticulatedPlayer => {
       const pGroup = new THREE.Group();
 
-      const actualKitColor = isGoalkeeper ? 0x22c55e : kitColor;
-      const jerseyMat = new THREE.MeshStandardMaterial({ color: actualKitColor, roughness: 0.45 });
+      // Individualized skin and hair tones for squad diversity
+      const skinColorHex = SKIN_PALETTE[playerIndex % SKIN_PALETTE.length];
+      const hairColorHex = HAIR_PALETTE[(playerIndex * 2 + 1) % HAIR_PALETTE.length];
+
+      const skinMat = new THREE.MeshStandardMaterial({ color: skinColorHex, roughness: 0.65 });
+      const hairMat = new THREE.MeshStandardMaterial({ color: hairColorHex, roughness: 0.85 });
+
+      // Actual kit colors: Goalkeeper gets high-visibility pro keeper jersey
+      const actualKitColor = isGoalkeeper ? (isHomeTeam ? 0x10b981 : 0xf97316) : kitColor;
+      const jerseyMat = new THREE.MeshStandardMaterial({ color: actualKitColor, roughness: 0.4 });
       const shortsMat = new THREE.MeshStandardMaterial({ color: shortsColor, roughness: 0.5 });
+      const sockMat = new THREE.MeshStandardMaterial({ color: isHomeTeam ? kitColor : shortsColor, roughness: 0.5 });
 
-      const torso = new THREE.Mesh(playerTorsoGeom, jerseyMat);
-      torso.position.y = 1.6;
-      torso.castShadow = true;
-      pGroup.add(torso);
+      // 1. Soft Player Contact Shadow beneath feet
+      const playerShadow = new THREE.Mesh(shadowDiscGeom, shadowMat);
+      playerShadow.rotation.x = -Math.PI / 2;
+      playerShadow.position.y = 0.02;
+      pGroup.add(playerShadow);
 
+      // 2. Anatomical Torso (V-Taper Muscular Athletic Body)
+      const torsoGroup = new THREE.Group();
+
+      // Upper chest
+      const chest = new THREE.Mesh(chestGeom, jerseyMat);
+      chest.position.y = 1.76;
+      chest.castShadow = true;
+      torsoGroup.add(chest);
+
+      // Waist & abs
+      const waist = new THREE.Mesh(waistGeom, jerseyMat);
+      waist.position.y = 1.34;
+      waist.castShadow = true;
+      torsoGroup.add(waist);
+
+      // Muscular Neck
+      const neck = new THREE.Mesh(neckGeom, skinMat);
+      neck.position.y = 2.16;
+      neck.castShadow = true;
+      torsoGroup.add(neck);
+
+      // Pro Collar Ring
+      const collar = new THREE.Mesh(collarGeom, whiteMat);
+      collar.rotation.x = Math.PI / 2;
+      collar.position.y = 2.12;
+      torsoGroup.add(collar);
+
+      // Club Crest on left chest
+      const chestBadge = new THREE.Mesh(badgeGeom, crestMat);
+      chestBadge.position.set(-0.24, 1.86, -0.48);
+      chestBadge.rotation.y = Math.PI;
+      torsoGroup.add(chestBadge);
+
+      // Squad Number on Back of Jersey
+      const numberTexture = getJerseyNumberTexture(playerNumber, '#ffffff');
+      const numberMat = new THREE.MeshBasicMaterial({ map: numberTexture, transparent: true });
+      const backNumberMesh = new THREE.Mesh(numberPlateGeom, numberMat);
+      backNumberMesh.position.set(0, 1.78, 0.48);
+      torsoGroup.add(backNumberMesh);
+
+      pGroup.add(torsoGroup);
+      const torso = chest; // Reference maintained for external animations
+
+      // 3. Captain's Armband
       if (isCaptain) {
-        const bandGeom = new THREE.CylinderGeometry(0.56, 0.56, 0.2, 16);
-        const bandMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.2 });
-        const band = new THREE.Mesh(bandGeom, bandMat);
-        band.position.y = 1.7;
-        pGroup.add(band);
+        const armbandGeom = new THREE.CylinderGeometry(0.20, 0.20, 0.16, 16);
+        const armbandMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.2 });
+        const armband = new THREE.Mesh(armbandGeom, armbandMat);
+        armband.position.set(-0.62, 1.95, 0);
+        pGroup.add(armband);
       }
 
-      const shorts = new THREE.Mesh(playerShortsGeom, shortsMat);
+      // 4. Athletic Shorts
+      const shortsGroup = new THREE.Group();
+      const shorts = new THREE.Mesh(shortsGeom, shortsMat);
       shorts.position.y = 1.0;
       shorts.castShadow = true;
-      pGroup.add(shorts);
+      shortsGroup.add(shorts);
 
+      // Waistband
+      const waistband = new THREE.Mesh(waistbandGeom, whiteMat);
+      waistband.rotation.x = Math.PI / 2;
+      waistband.position.y = 1.27;
+      shortsGroup.add(waistband);
+
+      // Side stripes
+      [-0.45, 0.45].forEach((sx) => {
+        const stripe = new THREE.Mesh(stripeGeom, whiteMat);
+        stripe.position.set(sx, 1.0, 0);
+        shortsGroup.add(stripe);
+      });
+      pGroup.add(shortsGroup);
+
+      // 5. Realistic Head & 3D Facial Anatomy
       const headGroup = new THREE.Group();
-      headGroup.position.y = 2.45;
+      headGroup.position.y = 2.48;
 
-      const head = new THREE.Mesh(playerHeadGeom, skinMat);
-      head.castShadow = true;
-      headGroup.add(head);
+      // Cranium
+      const headMesh = new THREE.Mesh(headGeom, skinMat);
+      headMesh.castShadow = true;
+      headGroup.add(headMesh);
 
-      const hair = new THREE.Mesh(playerHairGeom, hairMat);
-      hair.position.y = 0.05;
-      headGroup.add(hair);
+      // Jaw and Chin
+      const jaw = new THREE.Mesh(jawGeom, skinMat);
+      jaw.position.set(0, -0.15, 0.08);
+      jaw.castShadow = true;
+      headGroup.add(jaw);
 
-      const visorGeom = new THREE.BoxGeometry(0.5, 0.15, 0.3);
-      const visor = new THREE.Mesh(visorGeom, new THREE.MeshStandardMaterial({ color: 0x1e293b }));
-      visor.position.set(0, 0, -0.32);
-      headGroup.add(visor);
+      // Ears (Left and Right)
+      [-0.36, 0.36].forEach((ex) => {
+        const ear = new THREE.Mesh(earGeom, skinMat);
+        ear.scale.set(0.6, 1.2, 0.8);
+        ear.position.set(ex, 0, -0.04);
+        headGroup.add(ear);
+      });
+
+      // 3D Sculpted Athletic Nose
+      const nose = new THREE.Mesh(noseGeom, skinMat);
+      nose.rotation.x = -Math.PI / 4;
+      nose.position.set(0, -0.01, 0.36);
+      headGroup.add(nose);
+
+      // 3D Eyes (Sclera + Pupil/Iris)
+      [-0.12, 0.12].forEach((eyeX) => {
+        const eyeWhite = new THREE.Mesh(eyeWhiteGeom, whiteMat);
+        eyeWhite.position.set(eyeX, 0.07, 0.32);
+        headGroup.add(eyeWhite);
+
+        const eyeIris = new THREE.Mesh(eyeIrisGeom, eyeIrisMat);
+        eyeIris.position.set(eyeX, 0.07, 0.36);
+        headGroup.add(eyeIris);
+
+        const brow = new THREE.Mesh(eyebrowGeom, hairMat);
+        brow.position.set(eyeX, 0.13, 0.34);
+        headGroup.add(brow);
+      });
+
+      // Mouth / Lips
+      const mouth = new THREE.Mesh(mouthGeom, lipMat);
+      mouth.position.set(0, -0.13, 0.34);
+      headGroup.add(mouth);
+
+      // Realistic 3D Textured Hair
+      const hairCrown = new THREE.Mesh(hairCrownGeom, hairMat);
+      hairCrown.position.set(0, 0.04, 0);
+      headGroup.add(hairCrown);
+
+      const hairFade = new THREE.Mesh(hairFadeGeom, hairMat);
+      hairFade.position.set(0, 0.10, -0.04);
+      headGroup.add(hairFade);
 
       pGroup.add(headGroup);
 
-      const createLeg = (xOffset: number) => {
+      // 6. Realistic Articulated Legs (Thigh + Knee + High Sock + Contoured Cleat)
+      const createLeg = (xOffset: number, isLeft: boolean) => {
         const legPivot = new THREE.Group();
-        legPivot.position.set(xOffset, 0.85, 0);
+        legPivot.position.set(xOffset, 0.88, 0);
 
-        const leg = new THREE.Mesh(playerLimbGeom, skinMat);
-        leg.position.y = -0.45;
-        leg.castShadow = true;
-        legPivot.add(leg);
+        // Upper Thigh
+        const thigh = new THREE.Mesh(thighGeom, skinMat);
+        thigh.position.y = -0.22;
+        thigh.castShadow = true;
+        legPivot.add(thigh);
 
-        const boot = new THREE.Mesh(playerBootGeom, bootMat);
-        boot.position.set(0, -0.85, -0.08);
-        boot.castShadow = true;
-        legPivot.add(boot);
+        // Kneecap
+        const knee = new THREE.Mesh(kneecapGeom, skinMat);
+        knee.position.set(0, -0.45, 0.04);
+        legPivot.add(knee);
 
+        // High Pro Soccer Sock with Shin Guard contour
+        const sock = new THREE.Mesh(sockGeom, sockMat);
+        sock.position.y = -0.72;
+        sock.castShadow = true;
+        legPivot.add(sock);
+
+        // Sock turnover cuff with accent band
+        const sockCuff = new THREE.Mesh(sockCuffGeom, whiteMat);
+        sockCuff.rotation.x = Math.PI / 2;
+        sockCuff.position.y = -0.48;
+        legPivot.add(sockCuff);
+
+        // Pro Football Cleats (Contoured aerodynamically)
+        const bootGroup = new THREE.Group();
+        bootGroup.position.set(0, -1.02, -0.06);
+
+        // Upper
+        const bootUpper = new THREE.Mesh(bootUpperGeom, bootUpperMat);
+        bootUpper.castShadow = true;
+        bootGroup.add(bootUpper);
+
+        // Laces / Tongue
+        const bootLaces = new THREE.Mesh(bootLacesGeom, whiteMat);
+        bootLaces.position.set(0, 0.09, 0.02);
+        bootGroup.add(bootLaces);
+
+        // Speed Swoosh / Accent Stripe on outer side
+        const bootSpeed = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.06, 0.22), bootSpeedMat);
+        bootSpeed.position.set(isLeft ? -0.11 : 0.11, 0.02, 0);
+        bootGroup.add(bootSpeed);
+
+        // Soleplate
+        const bootSole = new THREE.Mesh(bootSoleGeom, bootSoleMat);
+        bootSole.position.y = -0.09;
+        bootGroup.add(bootSole);
+
+        // Bottom Studs (Tacos de fútbol)
+        [
+          [-0.06, -0.12, -0.12],
+          [0.06, -0.12, -0.12],
+          [-0.06, -0.12, 0.12],
+          [0.06, -0.12, 0.12],
+        ].forEach(([sx, sy, sz]) => {
+          const stud = new THREE.Mesh(cleatStudGeom, bootSpeedMat);
+          stud.position.set(sx, sy, sz);
+          bootGroup.add(stud);
+        });
+
+        legPivot.add(bootGroup);
         return legPivot;
       };
 
-      const leftLeg = createLeg(-0.25);
-      const rightLeg = createLeg(0.25);
+      const leftLeg = createLeg(-0.25, true);
+      const rightLeg = createLeg(0.25, false);
       pGroup.add(leftLeg, rightLeg);
 
-      const createArm = (xOffset: number) => {
+      // 7. Realistic Articulated Arms (Sleeve + Bare Forearm + Athletic Hand / GK Glove)
+      const createArm = (xOffset: number, isLeft: boolean) => {
         const armPivot = new THREE.Group();
-        armPivot.position.set(xOffset, 2.0, 0);
+        armPivot.position.set(xOffset, 2.05, 0);
 
-        const arm = new THREE.Mesh(playerLimbGeom, jerseyMat);
-        arm.position.y = -0.4;
-        arm.castShadow = true;
-        armPivot.add(arm);
+        // Jersey Sleeve
+        const sleeve = new THREE.Mesh(sleeveGeom, jerseyMat);
+        sleeve.position.y = -0.18;
+        sleeve.castShadow = true;
+        armPivot.add(sleeve);
 
-        const hand = new THREE.Mesh(isGoalkeeper ? playerGloveGeom : playerBootGeom, isGoalkeeper ? gloveMat : skinMat);
-        hand.position.set(0, -0.8, 0);
-        hand.scale.set(0.7, 0.7, 0.7);
-        armPivot.add(hand);
+        // Sleeve cuff ring
+        const sleeveCuff = new THREE.Mesh(sleeveCuffGeom, whiteMat);
+        sleeveCuff.rotation.x = Math.PI / 2;
+        sleeveCuff.position.y = -0.34;
+        armPivot.add(sleeveCuff);
+
+        // Muscular Forearm
+        const forearm = new THREE.Mesh(forearmGeom, skinMat);
+        forearm.position.y = -0.58;
+        forearm.castShadow = true;
+        armPivot.add(forearm);
+
+        // White Athletic Wrist Tape
+        const wristTape = new THREE.Mesh(wristTapeGeom, wristTapeMat);
+        wristTape.position.y = -0.78;
+        armPivot.add(wristTape);
+
+        if (isGoalkeeper) {
+          // Professional Goalkeeper Gloves
+          const gkGlove = new THREE.Mesh(gkGloveGeom, gkGlovePalmMat);
+          gkGlove.position.set(0, -0.92, 0);
+          gkGlove.castShadow = true;
+          armPivot.add(gkGlove);
+
+          const gkBackhand = new THREE.Mesh(gkBackhandGeom, gkGloveBackMat);
+          gkBackhand.position.set(0, -0.92, 0.08);
+          armPivot.add(gkBackhand);
+        } else {
+          // Anatomical Athletic Hand (Palm + Thumb + Flexed Fingers in running posture)
+          const handGroup = new THREE.Group();
+          handGroup.position.set(0, -0.88, 0);
+
+          const palm = new THREE.Mesh(palmGeom, skinMat);
+          handGroup.add(palm);
+
+          const thumb = new THREE.Mesh(thumbGeom, skinMat);
+          thumb.position.set(isLeft ? 0.08 : -0.08, -0.02, 0.04);
+          thumb.rotation.z = isLeft ? -Math.PI / 6 : Math.PI / 6;
+          handGroup.add(thumb);
+
+          const fingers = new THREE.Mesh(fingerGeom, skinMat);
+          fingers.position.set(0, -0.10, 0.02);
+          handGroup.add(fingers);
+
+          armPivot.add(handGroup);
+        }
 
         return armPivot;
       };
 
-      const leftArm = createArm(-0.65);
-      const rightArm = createArm(0.65);
+      const leftArm = createArm(-0.62, true);
+      const rightArm = createArm(0.62, false);
       pGroup.add(leftArm, rightArm);
 
       scene.add(pGroup);
@@ -1085,19 +1494,45 @@ export default function FootballGame({
       };
     };
 
-    // --- CREATE 22 PLAYERS (11 HOME + 11 AWAY) ---
+    // --- CREATE 22 PLAYERS (11 HOME + 11 AWAY) WITH DIVERSE SQUAD NUMBERS ---
     const homeKit = team?.jerseyColor || '#2563eb';
     const homeShorts = team?.shortsColor || '#ffffff';
     const awayKit = team?.rivalColor || '#dc2626';
     const awayShorts = '#0f172a';
 
-    const homePlayers: ArticulatedPlayer[] = HOME_LINEUP_BASE.map((p) =>
-      createArticulatedPlayer(homeKit, homeShorts, p.isGoalkeeper, p.isCaptain, p.baseX, p.baseZ, p.role)
-    );
+    const homePlayers: ArticulatedPlayer[] = HOME_LINEUP_BASE.map((p, idx) => {
+      const num = p.isCaptain ? (team?.playerNumber || 9) : (p.id === 0 ? 1 : p.id === 1 ? 26 : p.id === 2 ? 13 : p.id === 3 ? 2 : p.id === 4 ? 3 : p.id === 5 ? 4 : p.id === 6 ? 20 : p.id === 7 ? 14 : p.id === 8 ? 21 : p.id === 10 ? 18 : 10);
+      return createArticulatedPlayer(
+        homeKit,
+        homeShorts,
+        p.isGoalkeeper,
+        p.isCaptain,
+        p.baseX,
+        p.baseZ,
+        p.role,
+        num,
+        idx,
+        p.name,
+        true
+      );
+    });
 
-    const awayPlayers: ArticulatedPlayer[] = AWAY_LINEUP_BASE.map((p) =>
-      createArticulatedPlayer(awayKit, awayShorts, p.isGoalkeeper, p.isCaptain, p.baseX, p.baseZ, p.role)
-    );
+    const awayPlayers: ArticulatedPlayer[] = AWAY_LINEUP_BASE.map((p, idx) => {
+      const num = p.isGoalkeeper ? 1 : (idx + 1);
+      return createArticulatedPlayer(
+        awayKit,
+        awayShorts,
+        p.isGoalkeeper,
+        p.isCaptain,
+        p.baseX,
+        p.baseZ,
+        p.role,
+        num,
+        idx + 11,
+        p.name,
+        false
+      );
+    });
 
     homePlayers.forEach((p, idx) => {
       p.group.position.set(-54 + idx * 1.4, 0, -1.5);
@@ -1146,8 +1581,313 @@ export default function FootballGame({
     let ballPossession: { team: 'home' | 'away'; index: number } | null = null;
     let ballFreeTimer = 0;
 
+    // --- TRAINING DRILL REWARD & SETUP HELPERS ---
+    function triggerTrainingSuccess(reason: string) {
+      sounds.playCheer();
+      sounds.playGoalCelebration();
+      confetti({ particleCount: 180, spread: 90, origin: { y: 0.6 } });
+      const reward = 10;
+      setTrainingCoinsEarned((c) => c + reward);
+      setTrainingGoalsCount((g) => g + 1);
+      setTrainingRewardNotification({
+        title: '¡Entrenamiento Exitoso!',
+        subtitle: reason,
+        coins: reward,
+      });
+      if (onTrainingRewardRef.current) {
+        onTrainingRewardRef.current(reward, reason);
+      }
+    }
+
+    // --- SETUP DRILL ON 3D PITCH ---
+    function setupTrainingDrill(drillId: string = currentDrillRef.current) {
+      const cleanDrill = drillId.replace('drill_', '');
+      ballPossession = null;
+      ballFreeTimer = 0.5;
+      goalCooldownRef.current = false;
+      lastTouchTeamRef.current = 'home';
+      sounds.playWhistle(true);
+
+      // Move bench & inactive players to sidelines so active pitch zone is unobstructed
+      homePlayers.forEach((p, idx) => {
+        p.group.position.set(-36 - (idx % 3) * 3, 0, 10 + idx * 4);
+        p.group.rotation.y = -Math.PI / 2;
+        p.group.rotation.x = 0;
+        p.diveAngle = 0;
+        p.tackleTimer = 0;
+        p.dribbleTimer = 0;
+        p.isKnockedDown = false;
+        p.knockdownTimer = 0;
+      });
+
+      awayPlayers.forEach((p, idx) => {
+        p.group.position.set(36 + (idx % 3) * 3, 0, 10 + idx * 4);
+        p.group.rotation.y = Math.PI / 2;
+        p.group.rotation.x = 0;
+        p.diveAngle = 0;
+        p.tackleTimer = 0;
+        p.dribbleTimer = 0;
+        p.isKnockedDown = false;
+        p.knockdownTimer = 0;
+      });
+
+      const userKicker = homePlayers[activePlayerIndexRef.current] || homePlayers[9];
+      const rivalGK = awayPlayers[0];
+
+      if (rivalGK) {
+        rivalGK.group.position.set(0, 0, -fieldLength / 2 + 1.2);
+        rivalGK.group.rotation.y = Math.PI;
+        rivalGK.diveAngle = 0;
+        rivalGK.isDiving = false;
+      }
+
+      if (cleanDrill === 'tiro_libre') {
+        // FREE KICK (27m from North goal, 4-man defensive wall)
+        ball.position.set(0, 0.58, -fieldLength / 2 + 27);
+        ballVelocity.set(0, 0, 0);
+
+        if (userKicker) {
+          userKicker.group.position.set(0, 0, -fieldLength / 2 + 29.5);
+          userKicker.group.rotation.y = 0;
+        }
+
+        // 4-man defensive wall at 9.15m ahead
+        [-2.2, -0.7, 0.7, 2.2].forEach((x, i) => {
+          const wDef = awayPlayers[i + 2];
+          if (wDef) {
+            wDef.group.position.set(x, 0, -fieldLength / 2 + 17.85);
+            wDef.group.rotation.y = Math.PI;
+          }
+        });
+
+        camera.position.set(0, 8.5, -fieldLength / 2 + 42);
+        camera.lookAt(0, 2.8, -fieldLength / 2);
+      } else if (cleanDrill === 'penaltis') {
+        // PENALTY KICK (11m spot)
+        ball.position.set(0, 0.58, -fieldLength / 2 + 12);
+        ballVelocity.set(0, 0, 0);
+
+        if (userKicker) {
+          userKicker.group.position.set(0, 0, -fieldLength / 2 + 14.5);
+          userKicker.group.rotation.y = 0;
+        }
+
+        camera.position.set(0, 6.2, -fieldLength / 2 + 23);
+        camera.lookAt(0, 2.4, -fieldLength / 2);
+      } else if (cleanDrill === 'pases') {
+        // PASSING DRILL (Central diamond formation)
+        ball.position.set(0, 0.58, -8);
+        ballVelocity.set(0, 0, 0);
+
+        if (userKicker) {
+          userKicker.group.position.set(0, 0, -6.2);
+          userKicker.group.rotation.y = 0;
+        }
+
+        const tm1 = homePlayers[6];
+        const tm2 = homePlayers[7];
+        const tm3 = homePlayers[8];
+        if (tm1) {
+          tm1.group.position.set(-16, 0, -22);
+          tm1.group.lookAt(0, 0, -8);
+        }
+        if (tm2) {
+          tm2.group.position.set(16, 0, -22);
+          tm2.group.lookAt(0, 0, -8);
+        }
+        if (tm3) {
+          tm3.group.position.set(0, 0, -36);
+          tm3.group.lookAt(0, 0, -8);
+        }
+
+        camera.position.set(0, 22, 14);
+        camera.lookAt(0, 0, -20);
+      } else if (cleanDrill === 'tiros') {
+        // SHOOTING DRILL (21m from goal outside the arc)
+        ball.position.set(0, 0.58, -fieldLength / 2 + 21);
+        ballVelocity.set(0, 0, 0);
+
+        if (userKicker) {
+          userKicker.group.position.set(0, 0, -fieldLength / 2 + 23.2);
+          userKicker.group.rotation.y = 0;
+        }
+
+        camera.position.set(0, 8.0, -fieldLength / 2 + 34);
+        camera.lookAt(0, 2.6, -fieldLength / 2);
+      } else if (cleanDrill === 'regates') {
+        // DRIBBLING DRILL (Obstacle course / defenders in line)
+        ball.position.set(0, 0.58, -fieldLength / 2 + 42);
+        ballVelocity.set(0, 0, 0);
+
+        if (userKicker) {
+          userKicker.group.position.set(0, 0, -fieldLength / 2 + 44);
+          userKicker.group.rotation.y = 0;
+        }
+
+        const d1 = awayPlayers[2];
+        const d2 = awayPlayers[3];
+        const d3 = awayPlayers[4];
+        if (d1) {
+          d1.group.position.set(-3.5, 0, -fieldLength / 2 + 32);
+          d1.group.rotation.y = Math.PI;
+        }
+        if (d2) {
+          d2.group.position.set(3.5, 0, -fieldLength / 2 + 23);
+          d2.group.rotation.y = Math.PI;
+        }
+        if (d3) {
+          d3.group.position.set(0, 0, -fieldLength / 2 + 15);
+          d3.group.rotation.y = Math.PI;
+        }
+
+        camera.position.set(0, 11, -fieldLength / 2 + 55);
+        camera.lookAt(0, 2.5, -fieldLength / 2);
+      } else if (cleanDrill === 'centros') {
+        // CROSSING DRILL (From right wing into box)
+        ball.position.set(28, 0.58, -fieldLength / 2 + 24);
+        ballVelocity.set(0, 0, 0);
+
+        if (userKicker) {
+          userKicker.group.position.set(28, 0, -fieldLength / 2 + 26);
+          userKicker.group.rotation.y = -Math.PI / 4;
+        }
+
+        const striker = homePlayers[9];
+        const winger = homePlayers[10];
+        if (striker) {
+          striker.group.position.set(0, 0, -fieldLength / 2 + 11);
+          striker.group.lookAt(28, 0, -fieldLength / 2 + 24);
+        }
+        if (winger) {
+          winger.group.position.set(-6, 0, -fieldLength / 2 + 13);
+          winger.group.lookAt(28, 0, -fieldLength / 2 + 24);
+        }
+
+        camera.position.set(32, 9, -fieldLength / 2 + 38);
+        camera.lookAt(5, 3, -fieldLength / 2 + 8);
+      } else {
+        ball.position.set(0, 0.58, 0);
+        ballVelocity.set(0, 0, 0);
+      }
+    }
+    setupTrainingDrillRef.current = setupTrainingDrill;
+
+    // --- EXECUTE SPECIALIZED DRILL ACTION ---
+    function executeTrainingAction(actionKey: string) {
+      if (goalCooldownRef.current) return;
+      sounds.playKick();
+      lastTouchTeamRef.current = 'home';
+      ballPossession = null;
+      ballFreeTimer = 0.5;
+
+      const userKicker = homePlayers[activePlayerIndexRef.current] || homePlayers[9];
+      if (userKicker) {
+        userKicker.rightLeg.rotation.x = -Math.PI / 2.4;
+        setTimeout(() => {
+          if (userKicker) userKicker.rightLeg.rotation.x = 0;
+        }, 260);
+      }
+
+      if (actionKey === 'tl_comba') {
+        // Curling free kick over the wall to top left angle
+        const target = new THREE.Vector3(-4.8, 5.2, -fieldLength / 2 - 1.2);
+        const dir = new THREE.Vector3().subVectors(target, ball.position).normalize();
+        ballVelocity.copy(dir.multiplyScalar(1.28));
+      } else if (actionKey === 'tl_potente') {
+        // Empeine total to top right post
+        const target = new THREE.Vector3(5.2, 4.6, -fieldLength / 2 - 1.2);
+        const dir = new THREE.Vector3().subVectors(target, ball.position).normalize();
+        ballVelocity.copy(dir.multiplyScalar(1.36));
+      } else if (actionKey === 'tl_raso') {
+        // Low driven free kick under wall
+        const target = new THREE.Vector3(-3.2, 0.45, -fieldLength / 2 - 1.0);
+        const dir = new THREE.Vector3().subVectors(target, ball.position).normalize();
+        ballVelocity.copy(dir.multiplyScalar(1.22));
+      } else if (actionKey === 'pen_izq') {
+        // Penalty to bottom left
+        const target = new THREE.Vector3(-5.2, 1.4, -fieldLength / 2 - 1.0);
+        const dir = new THREE.Vector3().subVectors(target, ball.position).normalize();
+        ballVelocity.copy(dir.multiplyScalar(1.3));
+      } else if (actionKey === 'pen_der') {
+        // Penalty to top right
+        const target = new THREE.Vector3(5.2, 4.6, -fieldLength / 2 - 1.0);
+        const dir = new THREE.Vector3().subVectors(target, ball.position).normalize();
+        ballVelocity.copy(dir.multiplyScalar(1.3));
+      } else if (actionKey === 'pen_panenka') {
+        // Panenka lob over diving keeper
+        const target = new THREE.Vector3(0, 3.4, -fieldLength / 2 - 1.0);
+        const dir = new THREE.Vector3().subVectors(target, ball.position).normalize();
+        ballVelocity.copy(dir.multiplyScalar(0.92));
+      } else if (actionKey === 'pen_fuerte') {
+        // High-velocity penalty shot
+        const target = new THREE.Vector3(1.0, 2.6, -fieldLength / 2 - 1.0);
+        const dir = new THREE.Vector3().subVectors(target, ball.position).normalize();
+        ballVelocity.copy(dir.multiplyScalar(1.4));
+      } else if (actionKey === 'pase_raso') {
+        const tm = homePlayers[6] || homePlayers[7];
+        if (tm) {
+          sounds.playPass();
+          const dir = new THREE.Vector3().subVectors(tm.group.position, ball.position).normalize();
+          ballVelocity.copy(dir.multiplyScalar(0.95));
+          setTimeout(() => triggerTrainingSuccess('¡Pase al pie completado con éxito!'), 900);
+        }
+      } else if (actionKey === 'pase_filtrado') {
+        const tm = homePlayers[8] || homePlayers[9];
+        if (tm) {
+          sounds.playPass();
+          const targetPos = tm.group.position.clone().add(new THREE.Vector3(0, 0, -8));
+          const dir = new THREE.Vector3().subVectors(targetPos, ball.position).normalize();
+          ballVelocity.copy(dir.multiplyScalar(1.1));
+          setTimeout(() => triggerTrainingSuccess('¡Pase filtrado milimétrico entre líneas!'), 1000);
+        }
+      } else if (actionKey === 'tiro_bomba') {
+        const target = new THREE.Vector3((Math.random() - 0.5) * 8, 4.5, -fieldLength / 2 - 1.0);
+        const dir = new THREE.Vector3().subVectors(target, ball.position).normalize();
+        ballVelocity.copy(dir.multiplyScalar(1.38));
+      } else if (actionKey === 'tiro_colocado') {
+        const target = new THREE.Vector3(-4.5, 4.2, -fieldLength / 2 - 1.0);
+        const dir = new THREE.Vector3().subVectors(target, ball.position).normalize();
+        ballVelocity.copy(dir.multiplyScalar(1.24));
+      } else if (actionKey === 'tiro_volea') {
+        ball.position.y = 1.4;
+        const target = new THREE.Vector3(4.5, 3.8, -fieldLength / 2 - 1.0);
+        const dir = new THREE.Vector3().subVectors(target, ball.position).normalize();
+        ballVelocity.copy(dir.multiplyScalar(1.35));
+      } else if (actionKey === 'regate_bicicleta') {
+        sounds.playDribble();
+        if (userKicker) userKicker.group.position.z -= 8;
+        ball.position.z -= 8.5;
+        setTimeout(() => {
+          const target = new THREE.Vector3(-4.2, 3.5, -fieldLength / 2 - 1.0);
+          const dir = new THREE.Vector3().subVectors(target, ball.position).normalize();
+          ballVelocity.copy(dir.multiplyScalar(1.28));
+        }, 600);
+      } else if (actionKey === 'centro_area') {
+        sounds.playKick();
+        const target = new THREE.Vector3(0, 4.8, -fieldLength / 2 + 10);
+        const dir = new THREE.Vector3().subVectors(target, ball.position).normalize();
+        ballVelocity.copy(dir.multiplyScalar(1.15));
+        setTimeout(() => {
+          const striker = homePlayers[9];
+          if (striker) {
+            striker.group.position.y = 1.2;
+            sounds.playKick();
+            const gDir = new THREE.Vector3(0, 2.5, -fieldLength / 2 - 1.0).sub(ball.position).normalize();
+            ballVelocity.copy(gDir.multiplyScalar(1.2));
+            setTimeout(() => { if (striker) striker.group.position.y = 0; }, 500);
+          }
+        }, 1100);
+      }
+    }
+    executeTrainingActionRef.current = executeTrainingAction;
+
     // Reset to kickoff
     function resetToKickoff() {
+      if (mode === 'training') {
+        setupTrainingDrill(currentDrillRef.current);
+        return;
+      }
+
       ballPossession = null;
       ballFreeTimer = 0.6;
       ball.position.set(0, 0.58, 0);
@@ -1176,6 +1916,10 @@ export default function FootballGame({
         p.isKnockedDown = false;
         p.knockdownTimer = 0;
       });
+    }
+
+    if (mode === 'training') {
+      setupTrainingDrill(currentDrillRef.current);
     }
 
     // --- REFS & SET PIECE CONTROLS ---
@@ -2749,9 +3493,16 @@ export default function FootballGame({
           goalCooldownRef.current = true;
           setPlayerScore((s) => s + 1);
           if (onGoalScored) onGoalScored();
-          setGoalAnnouncement({ scorer: 'player', text: '¡¡¡GOOOOL DEL EQUIPO!!!' });
+          setGoalAnnouncement({
+            scorer: 'player',
+            text: mode === 'training' ? '¡¡¡GOLAZO DE ENTRENAMIENTO!!! +10 MONEDAS 🪙' : '¡¡¡GOOOOL DEL EQUIPO!!!',
+          });
           sounds.playGoalCelebration();
-          confetti({ particleCount: 160, spread: 90, origin: { y: 0.6 } });
+          confetti({ particleCount: 180, spread: 90, origin: { y: 0.6 } });
+
+          if (mode === 'training') {
+            triggerTrainingSuccess('¡Golazo anotado en el entrenamiento!');
+          }
 
           setTimeout(() => {
             setGoalAnnouncement(null);
@@ -2776,6 +3527,14 @@ export default function FootballGame({
         }
         // Endline crossed outside goal: Corner Kick vs Goal Kick
         else if (Math.abs(ball.position.z) > fieldLength / 2 + 0.8 && !setPieceCooldownRef.current) {
+          if (mode === 'training') {
+            setPieceCooldownRef.current = true;
+            setTimeout(() => {
+              if (setupTrainingDrillRef.current) setupTrainingDrillRef.current();
+              setPieceCooldownRef.current = false;
+            }, 1800);
+            return;
+          }
           const crossedNorth = ball.position.z < 0;
           if (crossedNorth) {
             // Crossed north endline
@@ -3220,61 +3979,89 @@ export default function FootballGame({
 
       {/* --- TOP SCOREBOARD WITH MATCH PERIOD --- */}
       <header className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-3 z-20">
-        <div className="flex items-center gap-3 px-5 py-2 rounded-2xl bg-slate-900/90 text-white backdrop-blur-md border border-white/15 shadow-2xl">
-          <div className="flex items-center gap-2">
-            <span
-              className="w-3.5 h-3.5 rounded-full border border-white/40"
-              style={{ backgroundColor: team?.jerseyColor || '#2563eb' }}
-            />
-            <span className="font-black text-sm tracking-wider uppercase hidden sm:inline">
-              {team?.teamName || 'Local'}
-            </span>
-            <span className="text-2xl font-black text-white ml-1">{playerScore}</span>
-          </div>
+        {mode === 'training' ? (
+          <div className="flex items-center gap-3 px-4 sm:px-6 py-2 rounded-2xl bg-slate-950/95 text-white backdrop-blur-md border border-emerald-500/40 shadow-2xl">
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="font-black text-xs sm:text-sm tracking-wider uppercase text-emerald-300">
+                ENTRENAMIENTO:{' '}
+                {currentDrill === 'tiro_libre'
+                  ? 'TIRO LIBRE'
+                  : currentDrill === 'penaltis'
+                  ? 'PENALTIS'
+                  : currentDrill === 'pases'
+                  ? 'PASES'
+                  : currentDrill === 'tiros'
+                  ? 'TIROS'
+                  : currentDrill === 'regates'
+                  ? 'REGATES'
+                  : currentDrill === 'centros'
+                  ? 'CENTROS'
+                  : 'PRÁCTICA LIBRE'}
+              </span>
+            </div>
 
-          <div className="text-slate-500 font-black text-lg">-</div>
+            <div className="h-4 w-px bg-white/20" />
 
-          <div className="flex items-center gap-2">
-            <span className="text-2xl font-black text-white mr-1">{aiScore}</span>
-            <span className="font-black text-sm tracking-wider uppercase hidden sm:inline">Rival</span>
-            <span
-              className="w-3.5 h-3.5 rounded-full border border-white/40"
-              style={{ backgroundColor: team?.rivalColor || '#dc2626' }}
-            />
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded-md bg-amber-400/20 text-amber-300 border border-amber-400/40 font-black text-[10px] tracking-wider uppercase">
+                +10 🪙 POR GOL
+              </span>
+              <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300">
+                <Coins className="w-3.5 h-3.5 text-amber-400" />
+                <span>+{trainingCoinsEarned} 🪙</span>
+              </div>
+            </div>
           </div>
+        ) : (
+          <div className="flex items-center gap-3 px-5 py-2 rounded-2xl bg-slate-900/90 text-white backdrop-blur-md border border-white/15 shadow-2xl">
+            <div className="flex items-center gap-2">
+              <span
+                className="w-3.5 h-3.5 rounded-full border border-white/40"
+                style={{ backgroundColor: team?.jerseyColor || '#2563eb' }}
+              />
+              <span className="font-black text-sm tracking-wider uppercase hidden sm:inline">
+                {team?.teamName || 'Local'}
+              </span>
+              <span className="text-2xl font-black text-white ml-1">{playerScore}</span>
+            </div>
 
-          {/* Period Badge & Timer */}
-          <div className="ml-3 pl-3 border-l border-white/10 flex items-center gap-2">
-            <span
-              className={`px-2 py-0.5 rounded-md font-black text-[10px] uppercase tracking-wider border ${
-                mode === 'training'
-                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40'
-                  : 'bg-amber-500/20 text-amber-300 border-amber-400/30'
-              }`}
-            >
-              {mode === 'training'
-                ? 'ENTRENAMIENTO'
-                : matchPeriod === '1st_half'
-                ? '1T'
-                : matchPeriod === 'half_time'
-                ? 'DESCANSO'
-                : matchPeriod === '2nd_half'
-                ? '2T'
-                : matchPeriod === 'extra_time'
-                ? 'PRÓRROGA'
-                : matchPeriod === 'penalties'
-                ? 'PENALTIS'
-                : 'FINAL'}
-            </span>
-            <span className="font-mono font-bold text-amber-400 text-sm">
-              {mode === 'training'
-                ? 'LIBRE'
-                : matchPeriod === 'penalties'
-                ? 'TANDA'
-                : formatTime(timeRemaining)}
-            </span>
+            <div className="text-slate-500 font-black text-lg">-</div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-2xl font-black text-white mr-1">{aiScore}</span>
+              <span className="font-black text-sm tracking-wider uppercase hidden sm:inline">Rival</span>
+              <span
+                className="w-3.5 h-3.5 rounded-full border border-white/40"
+                style={{ backgroundColor: team?.rivalColor || '#dc2626' }}
+              />
+            </div>
+
+            {/* Period Badge & Timer */}
+            <div className="ml-3 pl-3 border-l border-white/10 flex items-center gap-2">
+              <span
+                className="px-2 py-0.5 rounded-md font-black text-[10px] uppercase tracking-wider border bg-amber-500/20 text-amber-300 border-amber-400/30"
+              >
+                {matchPeriod === '1st_half'
+                  ? '1T'
+                  : matchPeriod === 'half_time'
+                  ? 'DESCANSO'
+                  : matchPeriod === '2nd_half'
+                  ? '2T'
+                  : matchPeriod === 'extra_time'
+                  ? 'PRÓRROGA'
+                  : matchPeriod === 'penalties'
+                  ? 'PENALTIS'
+                  : 'FINAL'}
+              </span>
+              <span className="font-mono font-bold text-amber-400 text-sm">
+                {matchPeriod === 'penalties'
+                  ? 'TANDA'
+                  : formatTime(timeRemaining)}
+              </span>
+            </div>
           </div>
-        </div>
+        )}
       </header>
 
       {/* Top Right Controls */}
@@ -3425,6 +4212,283 @@ export default function FootballGame({
           </div>
         </div>
       ) : null}
+
+      {/* --- TRAINING SUCCESS CELEBRATION NOTIFICATION --- */}
+      {trainingRewardNotification && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 animate-bounce pointer-events-auto">
+          <div className="bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-slate-950 p-4 sm:p-5 rounded-3xl shadow-2xl border-2 border-white flex flex-col items-center gap-2 max-w-md text-center">
+            <div className="flex items-center gap-2 font-black text-sm sm:text-base uppercase tracking-wider">
+              <Trophy className="w-6 h-6 fill-slate-950" />
+              <span>{trainingRewardNotification.title}</span>
+            </div>
+            <p className="text-xs font-bold text-slate-950">
+              {trainingRewardNotification.subtitle}
+            </p>
+            <div className="px-3.5 py-1.5 rounded-xl bg-slate-950 text-amber-300 font-black text-xs flex items-center gap-1.5 shadow">
+              <Coins className="w-4 h-4 text-amber-400" />
+              <span>+{trainingRewardNotification.coins} Monedas Acreditadas</span>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                onClick={() => {
+                  setTrainingRewardNotification(null);
+                  if (setupTrainingDrillRef.current) setupTrainingDrillRef.current();
+                }}
+                className="px-4 py-2 rounded-xl bg-slate-950 hover:bg-slate-900 text-white font-black text-xs uppercase shadow flex items-center gap-1.5 active:scale-95"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
+                <span>Repetir Tiro (+10 🪙)</span>
+              </button>
+              <button
+                onClick={() => setTrainingDrillSelectorOpen(true)}
+                className="px-3 py-2 rounded-xl bg-white/40 hover:bg-white/60 text-slate-950 font-black text-xs uppercase shadow flex items-center gap-1 active:scale-95"
+              >
+                <span>Otro Ejercicio</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- IN-GAME TRAINING DRILL SELECTOR MODAL --- */}
+      {trainingDrillSelectorOpen && (
+        <div className="absolute inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 select-none">
+          <div className="bg-slate-950 border-2 border-amber-400/50 p-5 sm:p-6 rounded-3xl max-w-lg w-full shadow-2xl text-white space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2.5">
+                <Target className="w-5 h-5 text-amber-400" />
+                <h3 className="font-black text-base sm:text-lg uppercase">Cambiar Ejercicio en Cancha</h3>
+              </div>
+              <button
+                onClick={() => setTrainingDrillSelectorOpen(false)}
+                className="p-1 rounded-lg hover:bg-white/10 text-slate-400"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300">
+              Selecciona el entrenamiento que tu jugador realizará directamente en el campo. ¡Ganas <strong>10 monedas</strong> por cada acierto!:
+            </p>
+
+            <div className="grid grid-cols-2 gap-2.5">
+              {[
+                { id: 'tiro_libre', name: 'Tiro Libre', badge: 'Con Barrera', color: 'border-amber-400/40 text-amber-300' },
+                { id: 'penaltis', name: 'Penaltis', badge: '1 vs 1 Portero', color: 'border-rose-400/40 text-rose-300' },
+                { id: 'pases', name: 'Pases', badge: 'Precisión', color: 'border-emerald-400/40 text-emerald-300' },
+                { id: 'tiros', name: 'Tiros a Puerta', badge: 'Media Distancia', color: 'border-sky-400/40 text-sky-300' },
+                { id: 'regates', name: 'Regates', badge: 'Fintas y Dribles', color: 'border-purple-400/40 text-purple-300' },
+                { id: 'centros', name: 'Centros y Remates', badge: 'Juego Aéreo', color: 'border-orange-400/40 text-orange-300' },
+              ].map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => {
+                    sounds.playBounce();
+                    setCurrentDrill(d.id);
+                    currentDrillRef.current = d.id;
+                    setTrainingDrillSelectorOpen(false);
+                    setTrainingRewardNotification(null);
+                    if (onSwitchTrainingDrillRef.current) onSwitchTrainingDrillRef.current(d.id);
+                    if (setupTrainingDrillRef.current) setupTrainingDrillRef.current(d.id);
+                  }}
+                  className={`p-3 rounded-2xl bg-slate-900/90 border ${d.color} hover:bg-slate-800 text-left transition-all active:scale-95 group flex flex-col justify-between`}
+                >
+                  <div className="text-[10px] uppercase font-bold text-slate-400">{d.badge}</div>
+                  <div className="font-black text-sm text-white group-hover:text-amber-300">{d.name}</div>
+                  <div className="text-[10px] text-amber-400 font-black mt-1">+10 🪙</div>
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setTrainingDrillSelectorOpen(false)}
+              className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs uppercase"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- FLOATING TRAINING DRILL CONTROLS ON PITCH --- */}
+      {mode === 'training' && (
+        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 w-[96%] max-w-3xl pointer-events-auto flex flex-col items-center gap-2">
+          <div className="w-full bg-slate-950/95 border-2 border-emerald-500/50 backdrop-blur-md p-3 sm:p-4 rounded-2xl shadow-2xl flex flex-col gap-2.5 text-white">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <div className="flex items-center gap-2">
+                <Target className="w-4 h-4 text-emerald-400" />
+                <span className="font-black text-xs sm:text-sm uppercase tracking-wider text-emerald-300">
+                  {currentDrill === 'tiro_libre'
+                    ? '🎯 Tiro Libre: Supera la barrera y anota gol (+10 🪙)'
+                    : currentDrill === 'penaltis'
+                    ? '🚨 Penalti: Bate al portero desde los 11 metros (+10 🪙)'
+                    : currentDrill === 'pases'
+                    ? '⚡ Pases: Conecta con tus compañeros (+10 🪙)'
+                    : currentDrill === 'tiros'
+                    ? '🚀 Tiros: Disparo potente fuera del área (+10 🪙)'
+                    : currentDrill === 'regates'
+                    ? '🪄 Regates: Desborda rivales y anota (+10 🪙)'
+                    : currentDrill === 'centros'
+                    ? '🚩 Centros: Envía al área para cabecear (+10 🪙)'
+                    : '⚽ Práctica Libre en el Estadio (+10 🪙)'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => {
+                    sounds.playBounce();
+                    if (setupTrainingDrillRef.current) setupTrainingDrillRef.current();
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold text-slate-200 flex items-center gap-1 active:scale-95"
+                  title="Colocar pelota de nuevo"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden sm:inline">Reset Balón</span>
+                </button>
+                <button
+                  onClick={() => {
+                    sounds.playBounce();
+                    setTrainingDrillSelectorOpen(true);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40 text-xs font-bold flex items-center gap-1 active:scale-95"
+                >
+                  <Zap className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Cambiar Ejercicio</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Action Skill Buttons for this drill */}
+            <div className="flex items-center gap-2 overflow-x-auto py-1 scrollbar-none">
+              {currentDrill === 'tiro_libre' && (
+                <>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('tl_comba')}
+                    className="flex-1 min-w-[120px] py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 hover:brightness-110 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow active:scale-95 transition-all"
+                  >
+                    <Target className="w-3.5 h-3.5 fill-slate-950" />
+                    <span>🎯 Comba al Ángulo</span>
+                  </button>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('tl_potente')}
+                    className="flex-1 min-w-[120px] py-2 px-3 rounded-xl bg-gradient-to-r from-rose-600 to-orange-500 hover:brightness-110 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow active:scale-95 transition-all"
+                  >
+                    <Flame className="w-3.5 h-3.5" />
+                    <span>💥 Empeine Potente</span>
+                  </button>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('tl_raso')}
+                    className="flex-1 min-w-[110px] py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:brightness-110 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow active:scale-95 transition-all"
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>👟 Raso por Abajo</span>
+                  </button>
+                </>
+              )}
+
+              {currentDrill === 'penaltis' && (
+                <>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('pen_izq')}
+                    className="flex-1 min-w-[100px] py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1 shadow active:scale-95"
+                  >
+                    <span>🎯 Ángulo Izq</span>
+                  </button>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('pen_der')}
+                    className="flex-1 min-w-[100px] py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1 shadow active:scale-95"
+                  >
+                    <span>🎯 Ángulo Der</span>
+                  </button>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('pen_panenka')}
+                    className="flex-1 min-w-[110px] py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1 shadow active:scale-95"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 fill-slate-950" />
+                    <span>✨ Panenka</span>
+                  </button>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('pen_fuerte')}
+                    className="flex-1 min-w-[100px] py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1 shadow active:scale-95"
+                  >
+                    <span>💥 Cañonazo</span>
+                  </button>
+                </>
+              )}
+
+              {currentDrill === 'pases' && (
+                <>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('pase_raso')}
+                    className="flex-1 min-w-[130px] py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow active:scale-95"
+                  >
+                    <Shield className="w-3.5 h-3.5" />
+                    <span>👟 Pase Raso al Pie</span>
+                  </button>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('pase_filtrado')}
+                    className="flex-1 min-w-[130px] py-2 px-3 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow active:scale-95"
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>🚀 Pase Filtrado al Hueco</span>
+                  </button>
+                </>
+              )}
+
+              {currentDrill === 'tiros' && (
+                <>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('tiro_bomba')}
+                    className="flex-1 min-w-[120px] py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1 shadow active:scale-95"
+                  >
+                    <Flame className="w-3.5 h-3.5" />
+                    <span>🚀 Bomba Lejana</span>
+                  </button>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('tiro_colocado')}
+                    className="flex-1 min-w-[120px] py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1 shadow active:scale-95"
+                  >
+                    <Target className="w-3.5 h-3.5 fill-slate-950" />
+                    <span>🎯 Tiro Colocado</span>
+                  </button>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('tiro_volea')}
+                    className="flex-1 min-w-[120px] py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1 shadow active:scale-95"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>🔥 Volea al Primer Toque</span>
+                  </button>
+                </>
+              )}
+
+              {currentDrill === 'regates' && (
+                <>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('regate_bicicleta')}
+                    className="flex-1 min-w-[140px] py-2 px-3 rounded-xl bg-gradient-to-r from-purple-600 to-pink-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow active:scale-95"
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>⚡ Bicicleta & Disparo a Puerta</span>
+                  </button>
+                </>
+              )}
+
+              {currentDrill === 'centros' && (
+                <>
+                  <button
+                    onClick={() => executeTrainingActionRef.current && executeTrainingActionRef.current('centro_area')}
+                    className="flex-1 min-w-[140px] py-2 px-3 rounded-xl bg-gradient-to-r from-orange-500 to-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 shadow active:scale-95"
+                  >
+                    <Flag className="w-3.5 h-3.5" />
+                    <span>🚩 Centro al Área y Cabeceo</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* --- HALF TIME MODAL --- */}
       {matchPeriod === 'half_time' && (
@@ -3648,7 +4712,7 @@ export default function FootballGame({
                 : 'Gran batalla táctica de 11 contra 11.'}
             </p>
 
-            <div className="flex items-center justify-center gap-6 bg-slate-950/60 p-4 rounded-xl border border-white/10 mb-6">
+            <div className="flex items-center justify-center gap-6 bg-slate-950/60 p-4 rounded-xl border border-white/10 mb-4">
               <div>
                 <div className="text-xs text-blue-400 font-semibold uppercase">{team?.teamName || 'Equipo'}</div>
                 <div className="text-3xl font-black text-white">{playerScore}</div>
@@ -3659,6 +4723,13 @@ export default function FootballGame({
                 <div className="text-3xl font-black text-white">{aiScore}</div>
               </div>
             </div>
+
+            {playerScore > aiScore && (
+              <div className="mb-6 inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-gradient-to-r from-amber-500/20 via-yellow-400/20 to-amber-500/20 border border-amber-400/50 text-amber-300 font-black text-sm shadow-lg animate-pulse">
+                <Coins className="w-4 h-4 text-amber-400" />
+                <span>+100 Monedas Ganadas por Victoria</span>
+              </div>
+            )}
 
             <div className="space-y-3">
               {onExitToMenu && (

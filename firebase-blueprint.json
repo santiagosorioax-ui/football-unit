@@ -1,0 +1,90 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with saved football squad, balance, unlockables, and match statistics",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Unique Firebase Authentication UID of the player"
+        },
+        "email": {
+          "type": "string",
+          "description": "Email address of the authenticated player"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name of the user"
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Avatar URL of the player"
+        },
+        "coins": {
+          "type": "number",
+          "description": "Coin balance available for signing players and upgrades"
+        },
+        "matchesPlayed": {
+          "type": "number",
+          "description": "Total matches played"
+        },
+        "wins": {
+          "type": "number",
+          "description": "Total match victories"
+        },
+        "losses": {
+          "type": "number",
+          "description": "Total match defeats"
+        },
+        "ties": {
+          "type": "number",
+          "description": "Total match draws"
+        },
+        "totalGoals": {
+          "type": "number",
+          "description": "Total goals scored by the player"
+        },
+        "teamName": {
+          "type": "string",
+          "description": "Custom team name"
+        },
+        "playerName": {
+          "type": "string",
+          "description": "Captained player name"
+        },
+        "playerNumber": {
+          "type": "number",
+          "description": "Jersey number of the star player"
+        },
+        "jerseyColor": {
+          "type": "string",
+          "description": "Primary jersey color hex code"
+        },
+        "shortsColor": {
+          "type": "string",
+          "description": "Shorts color hex code"
+        },
+        "rivalColor": {
+          "type": "string",
+          "description": "Opponent jersey color hex code"
+        },
+        "ballStyle": {
+          "type": "string",
+          "description": "Ball skin style"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Timestamp of last sync"
+        }
+      },
+      "required": ["userId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Private user game save and profile document accessible exclusively by the document owner"
+    }
+  }
+}

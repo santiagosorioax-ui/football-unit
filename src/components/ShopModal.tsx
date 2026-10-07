@@ -323,6 +323,36 @@ export default function ShopModal({
                       </div>
                     </div>
 
+                    {/* Realistic Footballer Card Bust Header */}
+                    <div className="relative h-20 w-full mb-3 rounded-xl overflow-hidden bg-gradient-to-t from-black/80 via-slate-950/40 to-transparent flex items-center justify-center border border-white/10 group-hover:border-amber-400/40 transition-colors">
+                      {/* Stadium spotlight glow */}
+                      <div className="absolute inset-0 bg-radial-gradient from-amber-500/15 to-transparent pointer-events-none" />
+
+                      {/* Footballer Athlete Silhouette with kit and number */}
+                      <div className="relative flex flex-col items-center">
+                        <div className="w-8 h-8 rounded-full bg-amber-200 border-2 border-white/70 shadow-lg relative overflow-hidden">
+                          <div className="absolute top-0 inset-x-0 h-3 bg-stone-900 rounded-t-full" />
+                          <div className="absolute top-3.5 left-1.5 w-1 h-1 rounded-full bg-slate-900" />
+                          <div className="absolute top-3.5 right-1.5 w-1 h-1 rounded-full bg-slate-900" />
+                        </div>
+                        {/* Shoulders & Jersey */}
+                        <div className="w-16 h-8 rounded-t-xl bg-gradient-to-b from-blue-600 to-slate-900 border-t border-x border-white/40 flex items-center justify-center -mt-1 shadow-md">
+                          <span className="text-white text-xs font-black drop-shadow tracking-wider">#{player.number}</span>
+                        </div>
+                      </div>
+
+                      {/* Country Flag Badge at bottom left of bust */}
+                      <div className="absolute bottom-1.5 left-2 flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/70 backdrop-blur-sm border border-white/15 text-[10px] text-white font-bold">
+                        <span>{player.flag}</span>
+                        <span className="truncate max-w-[80px]">{player.country}</span>
+                      </div>
+
+                      {/* Foot preference tag at bottom right */}
+                      <div className="absolute bottom-1.5 right-2 px-1.5 py-0.5 rounded-md bg-black/70 backdrop-blur-sm border border-white/15 text-[9px] text-amber-300 font-black uppercase">
+                        {player.preferredFoot}
+                      </div>
+                    </div>
+
                     <h3 className="text-white font-black text-base truncate tracking-wide group-hover:text-amber-300 transition-colors">
                       {player.shortName}
                     </h3>

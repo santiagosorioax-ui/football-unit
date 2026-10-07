@@ -695,17 +695,26 @@ export default function TeamScreen({
                   <div className="flex flex-col items-center">
                     {/* Player Token Card */}
                     <div className="relative">
-                      {/* Jersey Circle / Token */}
+                      {/* Realistic Footballer Token */}
                       <div
-                        className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl border-2 flex flex-col items-center justify-center font-black relative overflow-hidden transition-all ${
+                        className={`w-12 h-14 sm:w-14 sm:h-16 rounded-xl border-2 flex flex-col items-center justify-between py-1 font-black relative overflow-hidden transition-all ${
                           isSelected
                             ? 'border-amber-400 ring-4 ring-amber-400/80 shadow-[0_0_25px_rgba(250,204,21,0.9)] animate-pulse'
                             : 'border-white/90 shadow-[0_4px_15px_rgba(0,0,0,0.6)] group-hover:border-amber-400 group-hover:shadow-[0_0_15px_rgba(250,204,21,0.6)]'
                         }`}
-                        style={{ backgroundColor: data.jerseyColor }}
+                        style={{
+                          background: `linear-gradient(180deg, ${slot.role === 'POR' ? '#10b981' : data.jerseyColor} 0%, rgba(15,23,42,0.95) 100%)`,
+                        }}
                       >
+                        {/* Mini Player Head Silhouette with styled hair */}
+                        <div className="w-5 h-5 rounded-full bg-amber-200 border border-white/60 relative overflow-hidden shrink-0 shadow-inner mt-0.5">
+                          <div className="absolute top-0 inset-x-0 h-2 bg-stone-900 rounded-t-full" />
+                          <div className="absolute top-2 left-1 w-1 h-1 rounded-full bg-slate-900" />
+                          <div className="absolute top-2 right-1 w-1 h-1 rounded-full bg-slate-900" />
+                        </div>
+
                         {/* Jersey Number */}
-                        <span className="text-white text-xs sm:text-sm font-black drop-shadow">
+                        <span className="text-white text-xs sm:text-sm font-black drop-shadow tracking-tight">
                           #{player?.number || 10}
                         </span>
 

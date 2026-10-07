@@ -23,7 +23,7 @@ export interface MailboxMessage {
   reward?: number;
 }
 
-export type AppScreen = 'loading' | 'home' | 'match' | 'team' | 'shop';
+export type AppScreen = 'auth' | 'loading' | 'home' | 'match' | 'team' | 'shop';
 
 export interface GlobalStats {
   matchesPlayed: number;
@@ -41,4 +41,14 @@ export interface Achievement {
   requirement: number;
   icon: string;
   rewardCoins: number;
+}
+
+export interface TrainingDrill {
+  id: string;
+  title: string;
+  category: 'tiro_libre' | 'penaltis' | 'pases' | 'tiros' | 'regates' | 'centros';
+  description: string;
+  rewardCoins: number;
+  difficulty: 'Fácil' | 'Media' | 'Avanzada';
+  attributeBoost: string;
 }
