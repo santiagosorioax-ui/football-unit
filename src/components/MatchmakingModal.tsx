@@ -13,6 +13,7 @@ import {
   Check,
   Zap,
   Radio,
+  RefreshCw,
 } from 'lucide-react';
 import {
   createMatchRoom,
@@ -21,6 +22,7 @@ import {
   listenToMatchRoom,
   leaveOrCancelMatchRoom,
   updateMatchRoomState,
+  getReadableErrorMessage,
   MatchRoomData,
 } from '../lib/firebase';
 import { TeamCustomization } from '../types/game';
@@ -64,14 +66,18 @@ export default function MatchmakingModal({
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const isMatchConfirmedRef = useRef(false);
   const heartbeatTimerRef = useRef<any>(null);
+  const countdownIntervalRef = useRef<any>(null);
 
   // Per-tab unique session ID so multiple browser tabs don't collide when testing
   const [playerId] = useState<string>(() => {
-    if (currentUser?.uid) return currentUser.uid;
     if (typeof window !== 'undefined') {
       let sId = sessionStorage.getItem('fu_session_player_id');
       if (!sId) {
-        sId = 'player_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
+        sId =
+          (currentUser?.uid ? `${currentUser.uid}_` : 'p_') +
+          Date.now().toString(36) +
+          '_' +
+          Math.random().toString(36).substring(2, 6);
         sessionStorage.setItem('fu_session_player_id', sId);
       }
       return sId;
@@ -95,34 +101,71 @@ export default function MatchmakingModal({
 
   // Clean up previous room listener (never marks abandoned if match was confirmed!)
   const cleanupRoom = async () => {
-    if (isMatchConfirmedRef.current) {
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-        unsubscribeRef.current = null;
-      }
-      if (heartbeatTimerRef.current) {
-        clearInterval(heartbeatTimerRef.current);
-        heartbeatTimerRef.current = null;
-      }
-      return;
-    }
-
-    if (unsubscribeRef.current) {
-      unsubscribeRef.current();
-      unsubscribeRef.current = null;
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
     }
     if (heartbeatTimerRef.current) {
       clearInterval(heartbeatTimerRef.current);
       heartbeatTimerRef.current = null;
     }
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+      unsubscribeRef.current = null;
+    }
+
+    if (isMatchConfirmedRef.current) {
+      return;
+    }
+
     if (activeRoomIdRef.current) {
+      const rId = activeRoomIdRef.current;
+      activeRoomIdRef.current = null;
       try {
-        await leaveOrCancelMatchRoom(activeRoomIdRef.current, playerId);
+        await leaveOrCancelMatchRoom(rId, playerId);
       } catch (e) {
         console.warn('Error cleaning up room:', e);
       }
-      activeRoomIdRef.current = null;
     }
+  };
+
+  // Trigger match found with bulletproof countdown & single-execution guarantee
+  const triggerMatchFound = (room: MatchRoomData, role: 'host' | 'guest') => {
+    if (isMatchConfirmedRef.current) return;
+    isMatchConfirmedRef.current = true;
+
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    if (heartbeatTimerRef.current) {
+      clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
+    }
+
+    setMatchStatus('found');
+    sounds.playCheer();
+    sounds.playWhistle();
+
+    let count = 3;
+    setCountdown(count);
+
+    countdownIntervalRef.current = setInterval(() => {
+      count -= 1;
+      if (count > 0) {
+        setCountdown(count);
+        sounds.playBounce();
+      } else {
+        clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+        if (unsubscribeRef.current) {
+          unsubscribeRef.current();
+          unsubscribeRef.current = null;
+        }
+        activeRoomIdRef.current = null;
+        onMatchFound(room, role);
+      }
+    }, 1000);
   };
 
   // Start public matchmaking
@@ -134,86 +177,105 @@ export default function MatchmakingModal({
     setErrorMessage(null);
     setOpponent(null);
 
-    try {
-      // 1. Look for waiting public room
-      const existingRoom = await findPublicMatchRoom(playerId);
+    // 1. Try to find and join an existing waiting room
+    const tryJoinExistingRoom = async (): Promise<boolean> => {
+      try {
+        const existingRoom = await findPublicMatchRoom(playerId);
+        if (existingRoom && existingRoom.id) {
+          const joined = await joinMatchRoom(existingRoom.id, {
+            id: playerId,
+            name: playerName,
+            team,
+          });
 
-      if (existingRoom) {
-        // Join as guest
-        setUserRole('guest');
-        activeRoomIdRef.current = existingRoom.id;
-        const joined = await joinMatchRoom(existingRoom.id, {
-          id: playerId,
-          name: playerName,
-          team,
-        });
-        setCurrentRoom(joined);
+          setUserRole('guest');
+          activeRoomIdRef.current = joined.id;
+          setCurrentRoom(joined);
 
-        // Found opponent! (Host is opponent)
-        setOpponent({
-          name: joined.hostName,
-          teamName: joined.hostTeam.teamName,
-          jerseyColor: joined.hostTeam.jerseyColor,
-          shortsColor: joined.hostTeam.shortsColor,
-        });
+          setOpponent({
+            name: joined.hostName || 'Rival Online',
+            teamName: joined.hostTeam?.teamName || 'Rival FC',
+            jerseyColor: joined.hostTeam?.jerseyColor || '#ef4444',
+            shortsColor: joined.hostTeam?.shortsColor || '#18181b',
+          });
 
-        triggerMatchFound(joined, 'guest');
-      } else {
-        // Create new room as host
-        setUserRole('host');
-        const created = await createMatchRoom({
-          id: playerId,
-          name: playerName,
-          team,
-        });
-        setCurrentRoom(created);
-        activeRoomIdRef.current = created.id;
+          // Guest also subscribes to the room
+          const unsub = listenToMatchRoom(joined.id, (room) => {
+            if (!room) return;
+            setCurrentRoom(room);
+          });
+          unsubscribeRef.current = unsub;
 
-        // Send periodic heartbeat to keep room fresh while waiting
-        heartbeatTimerRef.current = setInterval(() => {
-          if (activeRoomIdRef.current && !isMatchConfirmedRef.current) {
-            updateMatchRoomState(activeRoomIdRef.current, {
-              updatedAt: new Date().toISOString(),
-            }).catch(() => {});
-          }
-        }, 5000);
-
-        // Listen for incoming guest player
-        const unsub = listenToMatchRoom(created.id, (room) => {
-          if (!room) return;
-          setCurrentRoom(room);
-
-          if (room.guestId && (room.status === 'starting' || room.status === 'playing') && !opponent) {
-            setOpponent({
-              name: room.guestName || 'Rival Online',
-              teamName: room.guestTeam?.teamName || 'Rival FC',
-              jerseyColor: room.guestTeam?.jerseyColor || '#ef4444',
-              shortsColor: room.guestTeam?.shortsColor || '#18181b',
-            });
-            triggerMatchFound(room, 'host');
-          }
-        });
-        unsubscribeRef.current = unsub;
+          triggerMatchFound(joined, 'guest');
+          return true;
+        }
+      } catch (err) {
+        console.warn('Attempt to join room failed, falling back to creating host room:', err);
       }
+      return false;
+    };
+
+    const didJoin = await tryJoinExistingRoom();
+    if (didJoin) return;
+
+    // 2. No room available, create a fresh waiting room as Host
+    try {
+      setUserRole('host');
+      const created = await createMatchRoom({
+        id: playerId,
+        name: playerName,
+        team,
+      });
+
+      setCurrentRoom(created);
+      activeRoomIdRef.current = created.id;
+
+      // Listen for incoming guest player
+      const unsub = listenToMatchRoom(created.id, (room) => {
+        if (!room) return;
+        setCurrentRoom(room);
+
+        if (
+          room.guestId &&
+          (room.status === 'starting' || room.status === 'playing') &&
+          !isMatchConfirmedRef.current
+        ) {
+          setOpponent({
+            name: room.guestName || 'Rival Online',
+            teamName: room.guestTeam?.teamName || 'Rival FC',
+            jerseyColor: room.guestTeam?.jerseyColor || '#ef4444',
+            shortsColor: room.guestTeam?.shortsColor || '#18181b',
+          });
+          triggerMatchFound(room, 'host');
+        }
+      });
+      unsubscribeRef.current = unsub;
+
+      // Keep room alive with heartbeat every 4 seconds
+      heartbeatTimerRef.current = setInterval(() => {
+        if (activeRoomIdRef.current && !isMatchConfirmedRef.current) {
+          updateMatchRoomState(activeRoomIdRef.current, {
+            updatedAt: new Date().toISOString(),
+          }).catch(() => {});
+        }
+      }, 4000);
     } catch (err: any) {
       console.error('Matchmaking error:', err);
-      setErrorMessage(
-        err?.message || 'Error de conexión al buscar partida online.'
-      );
+      setErrorMessage(getReadableErrorMessage(err));
       setMatchStatus('error');
     }
   };
 
   // Join private room with code
   const handleJoinWithCode = async () => {
-    if (!inputCode.trim()) return;
+    const cleanCode = inputCode.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().trim();
+    if (!cleanCode) return;
     sounds.playKick();
     setErrorMessage(null);
     try {
       await cleanupRoom();
-      const code = inputCode.toUpperCase().trim();
-      activeRoomIdRef.current = code;
-      const joined = await joinMatchRoom(code, {
+      activeRoomIdRef.current = cleanCode;
+      const joined = await joinMatchRoom(cleanCode, {
         id: playerId,
         name: playerName,
         team,
@@ -222,17 +284,22 @@ export default function MatchmakingModal({
       setUserRole('guest');
 
       setOpponent({
-        name: joined.hostName,
-        teamName: joined.hostTeam.teamName,
-        jerseyColor: joined.hostTeam.jerseyColor,
-        shortsColor: joined.hostTeam.shortsColor,
+        name: joined.hostName || 'Rival Online',
+        teamName: joined.hostTeam?.teamName || 'Rival FC',
+        jerseyColor: joined.hostTeam?.jerseyColor || '#ef4444',
+        shortsColor: joined.hostTeam?.shortsColor || '#18181b',
       });
+
+      const unsub = listenToMatchRoom(cleanCode, (room) => {
+        if (!room) return;
+        setCurrentRoom(room);
+      });
+      unsubscribeRef.current = unsub;
 
       triggerMatchFound(joined, 'guest');
     } catch (err: any) {
-      setErrorMessage(
-        err?.message || 'Código de sala inválido o la sala ya comenzó.'
-      );
+      setErrorMessage(getReadableErrorMessage(err));
+      setMatchStatus('error');
     }
   };
 
@@ -262,12 +329,16 @@ export default function MatchmakingModal({
             updatedAt: new Date().toISOString(),
           }).catch(() => {});
         }
-      }, 5000);
+      }, 4000);
 
       const unsub = listenToMatchRoom(created.id, (room) => {
         if (!room) return;
         setCurrentRoom(room);
-        if (room.guestId && (room.status === 'starting' || room.status === 'playing') && !opponent) {
+        if (
+          room.guestId &&
+          (room.status === 'starting' || room.status === 'playing') &&
+          !isMatchConfirmedRef.current
+        ) {
           setOpponent({
             name: room.guestName || 'Rival Online',
             teamName: room.guestTeam?.teamName || 'Rival FC',
@@ -279,37 +350,9 @@ export default function MatchmakingModal({
       });
       unsubscribeRef.current = unsub;
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Error al generar sala privada.');
+      setErrorMessage(getReadableErrorMessage(err));
+      setMatchStatus('error');
     }
-  };
-
-  const triggerMatchFound = (room: MatchRoomData, role: 'host' | 'guest') => {
-    isMatchConfirmedRef.current = true;
-    if (heartbeatTimerRef.current) {
-      clearInterval(heartbeatTimerRef.current);
-      heartbeatTimerRef.current = null;
-    }
-    setMatchStatus('found');
-    sounds.playCheer();
-    sounds.playWhistle();
-
-    let count = 3;
-    setCountdown(count);
-    const interval = setInterval(() => {
-      count -= 1;
-      if (count > 0) {
-        setCountdown(count);
-        sounds.playBounce();
-      } else {
-        clearInterval(interval);
-        if (unsubscribeRef.current) {
-          unsubscribeRef.current();
-          unsubscribeRef.current = null;
-        }
-        activeRoomIdRef.current = null;
-        onMatchFound(room, role);
-      }
-    }, 1000);
   };
 
   // Launch on open
@@ -452,6 +495,9 @@ export default function MatchmakingModal({
                   <span className="text-[10px] text-zinc-400 font-semibold truncate max-w-[120px]">
                     {team.teamName}
                   </span>
+                  <span className="mt-1 px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-bold">
+                    {userRole === 'host' ? 'LOCAL' : 'VISITANTE'}
+                  </span>
                 </div>
 
                 {/* Opponent (Waiting) */}
@@ -464,6 +510,9 @@ export default function MatchmakingModal({
                   </span>
                   <span className="text-[10px] text-zinc-500">
                     Servidor en línea
+                  </span>
+                  <span className="mt-1 px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 text-[9px] font-bold">
+                    {userRole === 'host' ? 'VISITANTE' : 'LOCAL'}
                   </span>
                 </div>
               </div>
@@ -513,7 +562,7 @@ export default function MatchmakingModal({
 
               {/* VS Matchup Showcase */}
               <div className="w-full grid grid-cols-2 gap-4 p-4 rounded-2xl bg-zinc-800/80 border border-zinc-700 mb-6">
-                {/* Player 1 */}
+                {/* You */}
                 <div className="flex flex-col items-center text-center p-3 rounded-xl bg-zinc-900 border border-emerald-500/40 shadow-md">
                   <div
                     className="w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl border-2 shadow-lg mb-2"
@@ -528,11 +577,11 @@ export default function MatchmakingModal({
                   <span className="text-sm font-black text-white">{playerName}</span>
                   <span className="text-xs text-emerald-400 font-semibold">{team.teamName}</span>
                   <span className="mt-1 px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
-                    LOCAL
+                    {userRole === 'host' ? 'LOCAL' : 'VISITANTE'}
                   </span>
                 </div>
 
-                {/* Player 2 (Opponent) */}
+                {/* Opponent */}
                 <div className="flex flex-col items-center text-center p-3 rounded-xl bg-zinc-900 border border-amber-500/40 shadow-md">
                   <div
                     className="w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl border-2 shadow-lg mb-2"
@@ -547,7 +596,7 @@ export default function MatchmakingModal({
                   <span className="text-sm font-black text-white">{opponent.name}</span>
                   <span className="text-xs text-amber-400 font-semibold">{opponent.teamName}</span>
                   <span className="mt-1 px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold">
-                    VISITANTE
+                    {userRole === 'host' ? 'VISITANTE' : 'LOCAL'}
                   </span>
                 </div>
               </div>
@@ -616,9 +665,10 @@ export default function MatchmakingModal({
               <p className="text-xs text-zinc-400 max-w-sm mb-4">{errorMessage}</p>
               <button
                 onClick={startPublicMatchmaking}
-                className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs uppercase"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs uppercase transition-all shadow-md active:scale-95"
               >
-                Reintentar Búsqueda
+                <RefreshCw className="w-4 h-4" />
+                <span>Reintentar Búsqueda</span>
               </button>
             </div>
           )}

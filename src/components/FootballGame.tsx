@@ -142,10 +142,22 @@ export default function FootballGame({
       if (multiplayerRole === 'host') {
         if (typeof data.scoreAway === 'number' && data.scoreAway > aiScoreRef.current) {
           setAiScore(data.scoreAway);
+          setGoalAnnouncement({
+            scorer: 'ai',
+            text: `¡GOL DE ${opponentName || 'RIVAL ONLINE'}!`,
+          });
+          sounds.playGoalCelebration();
+          setTimeout(() => setGoalAnnouncement(null), 3000);
         }
       } else {
         if (typeof data.scoreHome === 'number' && data.scoreHome > aiScoreRef.current) {
           setAiScore(data.scoreHome);
+          setGoalAnnouncement({
+            scorer: 'ai',
+            text: `¡GOL DE ${opponentName || 'RIVAL ONLINE'}!`,
+          });
+          sounds.playGoalCelebration();
+          setTimeout(() => setGoalAnnouncement(null), 3000);
         }
       }
     });
@@ -3536,7 +3548,18 @@ export default function FootballGame({
           ballPossession = null;
           ballFreeTimer = 3.5;
           goalCooldownRef.current = true;
-          setPlayerScore((s) => s + 1);
+          setPlayerScore((s) => {
+            const next = s + 1;
+            if (mode === 'multiplayer' && multiplayerRoomId) {
+              const scoreField = multiplayerRole === 'host' ? 'scoreHome' : 'scoreAway';
+              updateMatchRoomState(multiplayerRoomId, {
+                [scoreField]: next,
+                lastGoalScoredBy: multiplayerRole === 'host' ? 'home' : 'away',
+                lastGoalTimestamp: Date.now(),
+              }).catch(() => {});
+            }
+            return next;
+          });
           if (onGoalScored) onGoalScored();
           setGoalAnnouncement({
             scorer: 'player',

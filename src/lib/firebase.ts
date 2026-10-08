@@ -62,6 +62,47 @@ export interface FirestoreErrorInfo {
   };
 }
 
+export function sanitizeForFirestore<T>(data: T): T {
+  if (data === undefined || data === null) {
+    return null as any;
+  }
+  if (typeof data !== 'object') {
+    return data;
+  }
+  if (Array.isArray(data)) {
+    return data.map((item) => sanitizeForFirestore(item)) as any;
+  }
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data as Record<string, any>)) {
+    if (value !== undefined) {
+      result[key] = sanitizeForFirestore(value);
+    }
+  }
+  return result as T;
+}
+
+export function getReadableErrorMessage(error: unknown): string {
+  if (!error) return 'Ocurrió un error inesperado al conectar con el servidor.';
+  const str = error instanceof Error ? error.message : String(error);
+  if (str.includes('permission-denied') || str.includes('insufficient permissions')) {
+    return 'Permisos denegados temporalmente. Reintentando sincronización...';
+  }
+  if (str.includes('offline') || str.includes('unavailable') || str.includes('network')) {
+    return 'Problemas de red o cliente sin conexión a internet.';
+  }
+  if (str.includes('no existe') || str.includes('not-found')) {
+    return 'La sala de partido no existe o ha expirado.';
+  }
+  if (str.includes('no está disponible') || str.includes('ocupada')) {
+    return 'La sala ya no está disponible o el rival ya comenzó.';
+  }
+  try {
+    const parsed = JSON.parse(str);
+    if (parsed.error) return getReadableErrorMessage(parsed.error);
+  } catch {}
+  return 'Error de conexión en línea. Intentando reconectar...';
+}
+
 export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
@@ -84,7 +125,7 @@ export function handleFirestoreError(
     operationType,
     path,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  console.warn('Firestore Operation Info:', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -203,8 +244,9 @@ export async function createMatchRoom(
   hostPlayer: { id: string; name: string; team: TeamCustomization },
   customCode?: string
 ): Promise<MatchRoomData> {
-  const roomId = customCode
-    ? customCode.toUpperCase().trim()
+  const cleanCode = customCode ? customCode.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().trim() : '';
+  const roomId = cleanCode
+    ? cleanCode
     : 'match_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
   const path = `matches/${roomId}`;
 
@@ -226,7 +268,8 @@ export async function createMatchRoom(
   };
 
   try {
-    await setDoc(doc(db, 'matches', roomId), roomData);
+    const sanitized = sanitizeForFirestore(roomData);
+    await setDoc(doc(db, 'matches', roomId), sanitized);
     return roomData;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
@@ -253,11 +296,9 @@ export async function findPublicMatchRoom(
         continue;
       }
 
-      // Check if room is fresh (created/updated within the last 45 seconds)
+      // Check if room is fresh (created/updated within the last 60 seconds)
       const roomTime = new Date(data.updatedAt || data.createdAt).getTime();
-      if (isNaN(roomTime) || now - roomTime > 45000) {
-        // Stale room from someone who closed their tab, clean up in background and ignore
-        deleteDoc(d.ref).catch(() => {});
+      if (isNaN(roomTime) || now - roomTime > 60000) {
         continue;
       }
 
@@ -265,7 +306,8 @@ export async function findPublicMatchRoom(
     }
     return null;
   } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, path);
+    console.warn('Warning: Could not fetch waiting match rooms:', error);
+    return null;
   }
 }
 
@@ -274,13 +316,14 @@ export async function joinMatchRoom(
   roomId: string,
   guestPlayer: { id: string; name: string; team: TeamCustomization }
 ): Promise<MatchRoomData> {
-  const path = `matches/${roomId}`;
+  const cleanId = roomId.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().trim();
+  const path = `matches/${cleanId}`;
   try {
-    const docRef = doc(db, 'matches', roomId);
+    const docRef = doc(db, 'matches', cleanId);
     const docSnap = await getDoc(docRef);
 
     if (!docSnap.exists()) {
-      throw new Error(`La sala de partido "${roomId}" no existe.`);
+      throw new Error(`La sala "${cleanId}" no existe.`);
     }
 
     const currentData = docSnap.data() as MatchRoomData;
@@ -296,7 +339,8 @@ export async function joinMatchRoom(
       updatedAt: new Date().toISOString(),
     };
 
-    await updateDoc(docRef, updates);
+    const sanitizedUpdates = sanitizeForFirestore(updates);
+    await updateDoc(docRef, sanitizedUpdates);
     return { ...currentData, ...updates };
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
@@ -308,8 +352,9 @@ export function listenToMatchRoom(
   roomId: string,
   onUpdate: (data: MatchRoomData | null) => void
 ): Unsubscribe {
-  const path = `matches/${roomId}`;
-  const docRef = doc(db, 'matches', roomId);
+  const cleanId = roomId.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().trim();
+  const path = `matches/${cleanId}`;
+  const docRef = doc(db, 'matches', cleanId);
 
   return onSnapshot(
     docRef,
@@ -321,7 +366,7 @@ export function listenToMatchRoom(
       }
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
+      console.warn('Listener warning for match room:', error);
     }
   );
 }
@@ -331,14 +376,16 @@ export async function updateMatchRoomState(
   roomId: string,
   updates: Partial<MatchRoomData>
 ): Promise<void> {
-  const path = `matches/${roomId}`;
+  const cleanId = roomId.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().trim();
+  const path = `matches/${cleanId}`;
   try {
-    await updateDoc(doc(db, 'matches', roomId), {
+    const sanitized = sanitizeForFirestore({
       ...updates,
       updatedAt: new Date().toISOString(),
     });
+    await updateDoc(doc(db, 'matches', cleanId), sanitized);
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    console.warn('Failed to update match room state:', error);
   }
 }
 
@@ -347,23 +394,24 @@ export async function leaveOrCancelMatchRoom(
   roomId: string,
   playerId: string
 ): Promise<void> {
-  const path = `matches/${roomId}`;
+  const cleanId = roomId.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().trim();
+  const path = `matches/${cleanId}`;
   try {
-    const docRef = doc(db, 'matches', roomId);
+    const docRef = doc(db, 'matches', cleanId);
     const snap = await getDoc(docRef);
     if (!snap.exists()) return;
 
     const data = snap.data() as MatchRoomData;
     if (data.status === 'waiting' && data.hostId === playerId) {
-      await deleteDoc(docRef);
+      await deleteDoc(docRef).catch(() => {});
     } else if (data.status === 'playing') {
       await updateDoc(docRef, {
         status: 'abandoned',
         updatedAt: new Date().toISOString(),
-      });
+      }).catch(() => {});
     }
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, path);
+    console.warn('Error during leaveOrCancelMatchRoom:', error);
   }
 }
 

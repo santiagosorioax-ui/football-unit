@@ -41,15 +41,11 @@ service cloud.firestore {
 
     // Real-time online multiplayer match rooms
     match /matches/{matchId} {
-      allow get: if isValidId(matchId);
-      allow list: if request.query.limit <= 25;
+      allow read: if true;
       allow create: if isValidId(matchId) &&
         incoming().id is string &&
-        incoming().status in ['waiting', 'starting'] &&
-        incoming().hostId is string &&
-        incoming().hostName is string;
-      allow update: if isValidId(matchId) &&
-        incoming().status in ['waiting', 'starting', 'playing', 'finished', 'abandoned'];
+        incoming().hostId is string;
+      allow update: if isValidId(matchId);
       allow delete: if isValidId(matchId);
     }
   }

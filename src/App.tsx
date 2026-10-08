@@ -354,7 +354,11 @@ export default function App() {
 
   const handleExitMatch = (abandoned: boolean, pScore: number, aScore: number) => {
     if (multiplayerRoom) {
-      const pId = currentUser?.uid || localStorage.getItem('fu_guest_id') || 'guest';
+      const pId =
+        currentUser?.uid ||
+        sessionStorage.getItem('fu_session_player_id') ||
+        localStorage.getItem('fu_guest_id') ||
+        'guest';
       leaveOrCancelMatchRoom(multiplayerRoom.id, pId).catch((err) =>
         console.warn('Error leaving multiplayer room:', err)
       );
