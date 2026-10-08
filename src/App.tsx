@@ -7,6 +7,8 @@ import {
   saveUserDataToFirestore,
   loadUserDataFromFirestore,
   signOutUser,
+  MatchRoomData,
+  leaveOrCancelMatchRoom,
 } from './lib/firebase';
 import AuthPromptScreen from './components/AuthPromptScreen';
 import LoadingScreen from './components/LoadingScreen';
@@ -18,6 +20,7 @@ import ShopModal from './components/ShopModal';
 import AchievementsModal from './components/AchievementsModal';
 import AchievementNotification from './components/AchievementNotification';
 import TrainingModal from './components/TrainingModal';
+import MatchmakingModal from './components/MatchmakingModal';
 import { AppScreen, MailboxMessage, TeamCustomization, GlobalStats, Achievement } from './types/game';
 import { ACHIEVEMENTS } from './data/achievements';
 import { STARTER_TEAM_PLAYER_IDS, PlayerData } from './data/players';
@@ -61,7 +64,10 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [screen, setScreen] = useState<AppScreen>('auth');
   const [loadingDestination, setLoadingDestination] = useState<AppScreen>('home');
-  const [gameMode, setGameMode] = useState<'match' | 'training'>('match');
+  const [gameMode, setGameMode] = useState<'match' | 'training' | 'multiplayer'>('match');
+  const [isMatchmakingOpen, setIsMatchmakingOpen] = useState(false);
+  const [multiplayerRoom, setMultiplayerRoom] = useState<MatchRoomData | null>(null);
+  const [multiplayerRole, setMultiplayerRole] = useState<'host' | 'guest'>('host');
   const [trainingDrill, setTrainingDrill] = useState<string>('tiro_libre');
   const [gameInitialPeriod, setGameInitialPeriod] = useState<MatchPeriod | undefined>(undefined);
   const [isTrainingOpen, setIsTrainingOpen] = useState(false);
@@ -321,14 +327,16 @@ export default function App() {
       setCoins((c) => c + reward);
       addMailboxMessage({
         type: 'win',
-        title: '¡Gran Victoria en la Cancha!',
-        body: `¡Excelente desempeño! Derrotaste a la IA con un marcador de ${pScore} a ${aScore}. Has ganado +${reward} monedas.`,
+        title: gameMode === 'multiplayer' ? '¡Gran Victoria Multijugador Online!' : '¡Gran Victoria en la Cancha!',
+        body: gameMode === 'multiplayer'
+          ? `¡Excelente desempeño! Derrotaste a tu rival en línea con un marcador de ${pScore} a ${aScore}. Has ganado +${reward} monedas oficiales.`
+          : `¡Excelente desempeño! Derrotaste a la IA con un marcador de ${pScore} a ${aScore}. Has ganado +${reward} monedas.`,
         read: false,
       });
     } else if (result === 'loss') {
       addMailboxMessage({
         type: 'loss',
-        title: 'Derrota Frente a la IA',
+        title: gameMode === 'multiplayer' ? 'Derrota Frente a Rival Online' : 'Derrota Frente a la IA',
         body: `El partido finalizó con marcador de ${pScore} a ${aScore} a favor del rival. ¡Revisa tu táctica y vuelve por la revancha!`,
         read: false,
       });
@@ -345,7 +353,15 @@ export default function App() {
   };
 
   const handleExitMatch = (abandoned: boolean, pScore: number, aScore: number) => {
-    if (abandoned && gameMode === 'match') {
+    if (multiplayerRoom) {
+      const pId = currentUser?.uid || localStorage.getItem('fu_guest_id') || 'guest';
+      leaveOrCancelMatchRoom(multiplayerRoom.id, pId).catch((err) =>
+        console.warn('Error leaving multiplayer room:', err)
+      );
+      setMultiplayerRoom(null);
+    }
+
+    if (abandoned && (gameMode === 'match' || gameMode === 'multiplayer')) {
       setStats((prev) => {
         const updated: GlobalStats = {
           ...prev,
@@ -364,6 +380,25 @@ export default function App() {
       });
     }
     setScreen('home');
+  };
+
+  const handlePlayAI = () => {
+    setIsMatchmakingOpen(false);
+    setGameMode('match');
+    setMultiplayerRoom(null);
+    setGameInitialPeriod(undefined);
+    setLoadingDestination('match');
+    setScreen('loading');
+  };
+
+  const handleMatchFound = (roomData: MatchRoomData, role: 'host' | 'guest') => {
+    setIsMatchmakingOpen(false);
+    setGameMode('multiplayer');
+    setMultiplayerRoom(roomData);
+    setMultiplayerRole(role);
+    setGameInitialPeriod(undefined);
+    setLoadingDestination('match');
+    setScreen('loading');
   };
 
   // Player Shop Purchase Handler
@@ -483,11 +518,9 @@ export default function App() {
           onOpenAuth={() => setScreen('auth')}
           onSignOut={handleSignOut}
           onPlay={() => {
-            setGameMode('match');
-            setGameInitialPeriod(undefined);
-            setLoadingDestination('match');
-            setScreen('loading');
+            setIsMatchmakingOpen(true);
           }}
+          onPlayAI={handlePlayAI}
           onTraining={() => {
             setIsTrainingOpen(true);
           }}
@@ -514,6 +547,18 @@ export default function App() {
         <FootballGame
           team={team}
           mode={gameMode}
+          multiplayerRoomId={multiplayerRoom?.id}
+          multiplayerRole={multiplayerRole}
+          opponentName={
+            multiplayerRole === 'host'
+              ? multiplayerRoom?.guestName || undefined
+              : multiplayerRoom?.hostName || undefined
+          }
+          opponentTeam={
+            multiplayerRole === 'host'
+              ? multiplayerRoom?.guestTeam || undefined
+              : multiplayerRoom?.hostTeam || undefined
+          }
           trainingDrill={trainingDrill}
           initialPeriod={gameInitialPeriod}
           onShowLoading={() => {
@@ -528,6 +573,16 @@ export default function App() {
           onOpenTrainingMenu={() => setIsTrainingOpen(true)}
         />
       )}
+
+      {/* Matchmaking Modal for Online Multiplayer */}
+      <MatchmakingModal
+        isOpen={isMatchmakingOpen}
+        onClose={() => setIsMatchmakingOpen(false)}
+        team={team}
+        currentUser={currentUser}
+        onPlayAI={handlePlayAI}
+        onMatchFound={handleMatchFound}
+      />
 
       {/* Training Modal */}
       <TrainingModal

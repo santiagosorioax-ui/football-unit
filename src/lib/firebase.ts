@@ -13,6 +13,15 @@ import {
   getDoc,
   setDoc,
   getDocFromServer,
+  collection,
+  query,
+  where,
+  getDocs,
+  limit,
+  onSnapshot,
+  updateDoc,
+  deleteDoc,
+  Unsubscribe,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { TeamCustomization, GlobalStats } from '../types/game';
@@ -162,4 +171,190 @@ export async function loadUserDataFromFirestore(
   }
 }
 
+// ==========================================
+// REAL-TIME MULTIPLAYER MATCH FUNCTIONS
+// ==========================================
+
+export interface MatchRoomData {
+  id: string;
+  status: 'waiting' | 'starting' | 'playing' | 'finished' | 'abandoned';
+  hostId: string;
+  hostName: string;
+  hostTeam: TeamCustomization;
+  guestId?: string | null;
+  guestName?: string | null;
+  guestTeam?: TeamCustomization | null;
+  scoreHome: number;
+  scoreAway: number;
+  period?: string;
+  timeRemaining?: number;
+  ballPos?: { x: number; y: number; z: number };
+  hostPlayerPos?: { x: number; z: number; angle?: number; action?: string };
+  guestPlayerPos?: { x: number; z: number; angle?: number; action?: string };
+  lastGoalScoredBy?: 'home' | 'away' | null;
+  lastGoalTimestamp?: number;
+  winner?: 'home' | 'away' | 'tie' | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Create a new match room (Host)
+export async function createMatchRoom(
+  hostPlayer: { id: string; name: string; team: TeamCustomization },
+  customCode?: string
+): Promise<MatchRoomData> {
+  const roomId = customCode
+    ? customCode.toUpperCase().trim()
+    : 'match_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+  const path = `matches/${roomId}`;
+
+  const roomData: MatchRoomData = {
+    id: roomId,
+    status: 'waiting',
+    hostId: hostPlayer.id,
+    hostName: hostPlayer.name || 'Anfitrión',
+    hostTeam: hostPlayer.team,
+    guestId: null,
+    guestName: null,
+    guestTeam: null,
+    scoreHome: 0,
+    scoreAway: 0,
+    period: '1st_half',
+    timeRemaining: 120,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  try {
+    await setDoc(doc(db, 'matches', roomId), roomData);
+    return roomData;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+// Search for an existing open waiting match
+export async function findPublicMatchRoom(
+  currentUserId: string
+): Promise<MatchRoomData | null> {
+  const path = 'matches';
+  try {
+    const q = query(
+      collection(db, path),
+      where('status', '==', 'waiting'),
+      limit(10)
+    );
+    const snap = await getDocs(q);
+    for (const d of snap.docs) {
+      const data = d.data() as MatchRoomData;
+      // Do not join our own room if already waiting
+      if (data.hostId !== currentUserId) {
+        return data;
+      }
+    }
+    return null;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
+// Join an existing match room (Guest)
+export async function joinMatchRoom(
+  roomId: string,
+  guestPlayer: { id: string; name: string; team: TeamCustomization }
+): Promise<MatchRoomData> {
+  const path = `matches/${roomId}`;
+  try {
+    const docRef = doc(db, 'matches', roomId);
+    const docSnap = await getDoc(docRef);
+
+    if (!docSnap.exists()) {
+      throw new Error(`La sala de partido "${roomId}" no existe.`);
+    }
+
+    const currentData = docSnap.data() as MatchRoomData;
+    if (currentData.status !== 'waiting') {
+      throw new Error('La sala ya no está disponible o el partido ya comenzó.');
+    }
+
+    const updates: Partial<MatchRoomData> = {
+      guestId: guestPlayer.id,
+      guestName: guestPlayer.name || 'Rival Online',
+      guestTeam: guestPlayer.team,
+      status: 'starting',
+      updatedAt: new Date().toISOString(),
+    };
+
+    await updateDoc(docRef, updates);
+    return { ...currentData, ...updates };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+// Listen to real-time room updates
+export function listenToMatchRoom(
+  roomId: string,
+  onUpdate: (data: MatchRoomData | null) => void
+): Unsubscribe {
+  const path = `matches/${roomId}`;
+  const docRef = doc(db, 'matches', roomId);
+
+  return onSnapshot(
+    docRef,
+    (snap) => {
+      if (snap.exists()) {
+        onUpdate(snap.data() as MatchRoomData);
+      } else {
+        onUpdate(null);
+      }
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+    }
+  );
+}
+
+// Update match room state (scores, positions, status)
+export async function updateMatchRoomState(
+  roomId: string,
+  updates: Partial<MatchRoomData>
+): Promise<void> {
+  const path = `matches/${roomId}`;
+  try {
+    await updateDoc(doc(db, 'matches', roomId), {
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+// Leave or cancel match room
+export async function leaveOrCancelMatchRoom(
+  roomId: string,
+  playerId: string
+): Promise<void> {
+  const path = `matches/${roomId}`;
+  try {
+    const docRef = doc(db, 'matches', roomId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return;
+
+    const data = snap.data() as MatchRoomData;
+    if (data.status === 'waiting' && data.hostId === playerId) {
+      await deleteDoc(docRef);
+    } else if (data.status === 'playing' || data.status === 'starting') {
+      await updateDoc(docRef, {
+        status: 'abandoned',
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
 export { onAuthStateChanged };
+

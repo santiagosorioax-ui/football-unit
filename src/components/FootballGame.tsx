@@ -28,6 +28,7 @@ import { sounds } from '../utils/audio';
 import { createSoccerBallTexture, createGrassTexture } from '../utils/textures';
 import { TeamCustomization } from '../types/game';
 import { getPlayerById } from '../data/players';
+import { listenToMatchRoom, updateMatchRoomState } from '../lib/firebase';
 
 export type GameDifficulty = 'easy' | 'normal' | 'hard';
 export type CameraMode = 'follow' | 'tv' | 'topDown';
@@ -35,7 +36,11 @@ export type MatchPeriod = '1st_half' | 'half_time' | '2nd_half' | 'extra_time' |
 
 interface FootballGameProps {
   team?: TeamCustomization;
-  mode?: 'match' | 'training';
+  mode?: 'match' | 'training' | 'multiplayer';
+  multiplayerRoomId?: string;
+  multiplayerRole?: 'host' | 'guest';
+  opponentName?: string;
+  opponentTeam?: TeamCustomization;
   trainingDrill?: string;
   initialPeriod?: MatchPeriod;
   onShowLoading?: () => void;
@@ -89,6 +94,10 @@ const AWAY_LINEUP_BASE: PlayerRole[] = [
 export default function FootballGame({
   team,
   mode = 'match',
+  multiplayerRoomId,
+  multiplayerRole = 'host',
+  opponentName,
+  opponentTeam,
   trainingDrill,
   initialPeriod,
   onShowLoading,
@@ -109,6 +118,24 @@ export default function FootballGame({
   const [timeRemaining, setTimeRemaining] = useState(120); // 2 minutes (120s) per half/extra time
   const [isPaused, setIsPaused] = useState(false);
   const [gameOver, setGameOver] = useState(false);
+  const [rivalAbandoned, setRivalAbandoned] = useState(false);
+
+  // Multiplayer Room Listener
+  useEffect(() => {
+    if (mode !== 'multiplayer' || !multiplayerRoomId) return;
+
+    const unsub = listenToMatchRoom(multiplayerRoomId, (data) => {
+      if (!data) return;
+      if (data.status === 'abandoned') {
+        setRivalAbandoned(true);
+        sounds.playWhistle();
+      }
+    });
+
+    return () => {
+      unsub();
+    };
+  }, [mode, multiplayerRoomId]);
 
   // Active Training Drill State
   const [currentDrill, setCurrentDrill] = useState<string>(() => {
@@ -1497,8 +1524,8 @@ export default function FootballGame({
     // --- CREATE 22 PLAYERS (11 HOME + 11 AWAY) WITH DIVERSE SQUAD NUMBERS ---
     const homeKit = team?.jerseyColor || '#2563eb';
     const homeShorts = team?.shortsColor || '#ffffff';
-    const awayKit = team?.rivalColor || '#dc2626';
-    const awayShorts = '#0f172a';
+    const awayKit = opponentTeam?.jerseyColor || team?.rivalColor || '#dc2626';
+    const awayShorts = opponentTeam?.shortsColor || '#0f172a';
 
     const homePlayers: ArticulatedPlayer[] = HOME_LINEUP_BASE.map((p, idx) => {
       const num = p.isCaptain ? (team?.playerNumber || 9) : (p.id === 0 ? 1 : p.id === 1 ? 26 : p.id === 2 ? 13 : p.id === 3 ? 2 : p.id === 4 ? 3 : p.id === 5 ? 4 : p.id === 6 ? 20 : p.id === 7 ? 14 : p.id === 8 ? 21 : p.id === 10 ? 18 : 10);
@@ -4015,6 +4042,13 @@ export default function FootballGame({
           </div>
         ) : (
           <div className="flex items-center gap-3 px-5 py-2 rounded-2xl bg-slate-900/90 text-white backdrop-blur-md border border-white/15 shadow-2xl">
+            {mode === 'multiplayer' && (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-black text-[10px] tracking-wider uppercase mr-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span>ONLINE 1v1</span>
+              </div>
+            )}
+
             <div className="flex items-center gap-2">
               <span
                 className="w-3.5 h-3.5 rounded-full border border-white/40"
@@ -4030,10 +4064,15 @@ export default function FootballGame({
 
             <div className="flex items-center gap-2">
               <span className="text-2xl font-black text-white mr-1">{aiScore}</span>
-              <span className="font-black text-sm tracking-wider uppercase hidden sm:inline">Rival</span>
+              <span className="font-black text-sm tracking-wider uppercase hidden sm:inline truncate max-w-[100px]">
+                {opponentName || opponentTeam?.teamName || (mode === 'multiplayer' ? 'Rival Online' : 'Rival IA')}
+              </span>
               <span
                 className="w-3.5 h-3.5 rounded-full border border-white/40"
-                style={{ backgroundColor: team?.rivalColor || '#dc2626' }}
+                style={{
+                  backgroundColor:
+                    opponentTeam?.jerseyColor || team?.rivalColor || '#dc2626',
+                }}
               />
             </div>
 
@@ -4689,6 +4728,40 @@ export default function FootballGame({
                 </button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* RIVAL ABANDONED OVERLAY */}
+      {rivalAbandoned && (
+        <div className="absolute inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4 select-none">
+          <div className="bg-gradient-to-b from-zinc-900 to-black border-2 border-emerald-500/50 p-6 sm:p-8 rounded-3xl max-w-md w-full text-center shadow-[0_20px_60px_rgba(16,185,129,0.3)]">
+            <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center mx-auto mb-4 text-emerald-400">
+              <Trophy className="w-8 h-8" />
+            </div>
+            <h3 className="text-2xl font-black text-white uppercase tracking-wider mb-2">
+              ¡VICTORIA POR ABANDONO!
+            </h3>
+            <p className="text-sm text-zinc-300 mb-4">
+              Tu rival se ha desconectado o ha abandonado el partido online. ¡Se te otorga la victoria oficial!
+            </p>
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-amber-500/20 border border-amber-400/40 text-amber-300 font-black text-sm mb-6">
+              <Coins className="w-4 h-4 text-amber-400" />
+              <span>+100 Monedas Oficiales</span>
+            </div>
+            {onExitToMenu && (
+              <button
+                onClick={() => {
+                  sounds.playCheer();
+                  if (onMatchComplete) onMatchComplete('win', playerScore + 1, aiScore);
+                  onExitToMenu(false, playerScore + 1, aiScore);
+                }}
+                className="w-full py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-sm uppercase transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+              >
+                <Home className="w-4 h-4" />
+                <span>Reclamar Recompensa y Salir</span>
+              </button>
+            )}
           </div>
         </div>
       )}

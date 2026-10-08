@@ -79,12 +79,65 @@
         }
       },
       "required": ["userId"]
+    },
+    "MatchRoom": {
+      "title": "MatchRoom",
+      "description": "Real-time online multiplayer football match room between two real players",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Match room ID"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["waiting", "starting", "playing", "finished", "abandoned"],
+          "description": "Current lifecycle status of the online match"
+        },
+        "hostId": {
+          "type": "string",
+          "description": "Player ID of the room creator (Host)"
+        },
+        "hostName": {
+          "type": "string",
+          "description": "Display name of the host player"
+        },
+        "guestId": {
+          "type": "string",
+          "description": "Player ID of the joined opponent (Guest)"
+        },
+        "guestName": {
+          "type": "string",
+          "description": "Display name of the joined opponent"
+        },
+        "scoreHome": {
+          "type": "number",
+          "description": "Home team goals score"
+        },
+        "scoreAway": {
+          "type": "number",
+          "description": "Away team goals score"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp when the match was created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        }
+      },
+      "required": ["id", "status", "hostId", "hostName"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "UserProfile",
       "description": "Private user game save and profile document accessible exclusively by the document owner"
+    },
+    "/matches/{matchId}": {
+      "schema": "MatchRoom",
+      "description": "Real-time online multiplayer match room for live matchmaking and PvP matches"
     }
   }
 }

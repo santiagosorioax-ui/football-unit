@@ -1,7 +1,19 @@
-import React from 'react';
+import React, { useState, useRef } from 'react';
 import { User } from 'firebase/auth';
 import fieldCardImage from '../assets/images/field_equipo_card_1791086991368.jpg';
-import { ShoppingCart, Mail, Sparkles, Coins, Trophy, LogIn, LogOut, UserCheck } from 'lucide-react';
+import {
+  ShoppingCart,
+  Mail,
+  Sparkles,
+  Coins,
+  Trophy,
+  LogIn,
+  LogOut,
+  UserCheck,
+  Bot,
+  Globe2,
+  Users,
+} from 'lucide-react';
 import { TeamCustomization, GlobalStats } from '../types/game';
 import { sounds } from '../utils/audio';
 
@@ -16,6 +28,7 @@ interface HomeScreenProps {
   soundEnabled?: boolean;
   onToggleSound?: () => void;
   onPlay: () => void;
+  onPlayAI?: () => void;
   onTraining?: () => void;
   onOpenTeam: () => void;
   onOpenShop: () => void;
@@ -34,6 +47,7 @@ export default function HomeScreen({
   unreadMailCount,
   currentUser,
   onPlay,
+  onPlayAI,
   onTraining,
   onOpenTeam,
   onOpenShop,
@@ -42,6 +56,22 @@ export default function HomeScreen({
   onOpenAuth,
   onSignOut,
 }: HomeScreenProps) {
+  const [isPlayHovered, setIsPlayHovered] = useState(false);
+  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleMouseEnterPlay = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    setIsPlayHovered(true);
+  };
+
+  const handleMouseLeavePlay = () => {
+    hoverTimeoutRef.current = setTimeout(() => {
+      setIsPlayHovered(false);
+    }, 400);
+  };
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#700000] select-none font-sans flex flex-col justify-between">
       {/* Deep Red Background with Stylized Floating Red Circles (Exact to video) */}
@@ -278,28 +308,68 @@ export default function HomeScreen({
 
       {/* Bottom Action Bar (Green Bar with Black Border from Video: JUGAR, TIENDA, BUZÓN) */}
       <footer className="relative z-20 w-full bg-[#00a854] border-t-4 border-black py-2.5 sm:py-3.5 px-4 sm:px-10 shadow-2xl flex items-center justify-around text-black font-black">
-        {/* JUGAR Button */}
-        <button
-          onClick={() => {
-            sounds.playKick();
-            onPlay();
-          }}
-          className="flex items-center gap-2 sm:gap-3 px-4 sm:px-6 py-1.5 sm:py-2 rounded-xl hover:bg-black/10 transition-transform active:scale-95 group focus:outline-none"
+        {/* JUGAR Button (Online Multiplayer by Default + Pop-up 'Jugar con IA' on hover) */}
+        <div
+          className="relative flex flex-col items-center"
+          onMouseEnter={handleMouseEnterPlay}
+          onMouseLeave={handleMouseLeavePlay}
         >
-          <span className="text-xl sm:text-2xl md:text-3xl tracking-wider uppercase font-black">
-            JUGAR
-          </span>
-          {/* Soccer Player Silhouette Icon */}
-          <div className="w-6 h-6 sm:w-7 sm:h-7 text-black transform group-hover:translate-x-0.5 transition-transform">
-            <svg viewBox="0 0 24 24" fill="currentColor" className="w-full h-full">
-              <circle cx="15" cy="5" r="2.5" />
-              <path d="M13 8 L17 9 L15 14 L12 13 Z" />
-              <path d="M12 13 L8 17 L6 21 L8 21 L10 18 L13 15 Z" />
-              <path d="M15 14 L18 18 L21 21 L22 20 L19 16 Z" />
-              <circle cx="5" cy="21" r="2" />
-            </svg>
-          </div>
-        </button>
+          {/* Floating Option: JUGAR CON IA on Hover */}
+          {isPlayHovered && (
+            <div
+              className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 flex flex-col items-center z-50 pointer-events-auto animate-in fade-in slide-in-from-bottom-2 duration-200"
+              onMouseEnter={handleMouseEnterPlay}
+              onMouseLeave={handleMouseLeavePlay}
+            >
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  sounds.playKick();
+                  setIsPlayHovered(false);
+                  if (onPlayAI) onPlayAI();
+                  else onPlay();
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-black font-black text-xs sm:text-sm tracking-wider shadow-[0_12px_30px_rgba(245,158,11,0.6)] border-2 border-black hover:brightness-110 active:scale-95 transition-all whitespace-nowrap cursor-pointer"
+                title="Jugar partido individual contra la Inteligencia Artificial"
+              >
+                <Bot className="w-4 h-4 text-black animate-bounce" />
+                <span className="uppercase font-black">JUGAR CON IA</span>
+              </button>
+              {/* Tooltip arrow downward */}
+              <div className="w-2.5 h-2.5 bg-amber-500 rotate-45 -mt-1 border-r-2 border-b-2 border-black" />
+            </div>
+          )}
+
+          {/* Main JUGAR Button (Searches for Online Match with Real Player) */}
+          <button
+            onClick={() => {
+              sounds.playKick();
+              onPlay();
+            }}
+            className="flex items-center gap-2 sm:gap-3 px-4 sm:px-6 py-1.5 sm:py-2 rounded-xl hover:bg-black/10 transition-transform active:scale-95 group focus:outline-none"
+            title="Buscar partido multijugador online contra un jugador real"
+          >
+            <div className="flex flex-col items-start leading-none">
+              <span className="text-xl sm:text-2xl md:text-3xl tracking-wider uppercase font-black">
+                JUGAR
+              </span>
+              <span className="text-[9px] font-black tracking-widest text-emerald-950 uppercase -mt-0.5 opacity-90 hidden sm:inline">
+                MULTIJUGADOR 1v1
+              </span>
+            </div>
+
+            {/* Soccer Player Silhouette Icon */}
+            <div className="w-6 h-6 sm:w-7 sm:h-7 text-black transform group-hover:translate-x-0.5 transition-transform">
+              <svg viewBox="0 0 24 24" fill="currentColor" className="w-full h-full">
+                <circle cx="15" cy="5" r="2.5" />
+                <path d="M13 8 L17 9 L15 14 L12 13 Z" />
+                <path d="M12 13 L8 17 L6 21 L8 21 L10 18 L13 15 Z" />
+                <path d="M15 14 L18 18 L21 21 L22 20 L19 16 Z" />
+                <circle cx="5" cy="21" r="2" />
+              </svg>
+            </div>
+          </button>
+        </div>
 
         {/* TIENDA Button */}
         <button

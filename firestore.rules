@@ -19,6 +19,10 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function incoming() {
+      return request.resource.data;
+    }
+
     // Test connection document for verifying Firestore client connectivity
     match /test/{docId} {
       allow read, write: if true;
@@ -33,6 +37,20 @@ service cloud.firestore {
       allow update: if isOwner(userId) && isValidId(userId) &&
         request.resource.data.userId == request.auth.uid;
       allow delete: if isOwner(userId) && isValidId(userId);
+    }
+
+    // Real-time online multiplayer match rooms
+    match /matches/{matchId} {
+      allow get: if isValidId(matchId);
+      allow list: if request.query.limit <= 25;
+      allow create: if isValidId(matchId) &&
+        incoming().id is string &&
+        incoming().status in ['waiting', 'starting'] &&
+        incoming().hostId is string &&
+        incoming().hostName is string;
+      allow update: if isValidId(matchId) &&
+        incoming().status in ['waiting', 'starting', 'playing', 'finished', 'abandoned'];
+      allow delete: if isValidId(matchId);
     }
   }
 }
