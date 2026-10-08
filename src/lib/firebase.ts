@@ -242,15 +242,26 @@ export async function findPublicMatchRoom(
     const q = query(
       collection(db, path),
       where('status', '==', 'waiting'),
-      limit(10)
+      limit(20)
     );
     const snap = await getDocs(q);
+    const now = Date.now();
     for (const d of snap.docs) {
       const data = d.data() as MatchRoomData;
       // Do not join our own room if already waiting
-      if (data.hostId !== currentUserId) {
-        return data;
+      if (data.hostId === currentUserId) {
+        continue;
       }
+
+      // Check if room is fresh (created/updated within the last 45 seconds)
+      const roomTime = new Date(data.updatedAt || data.createdAt).getTime();
+      if (isNaN(roomTime) || now - roomTime > 45000) {
+        // Stale room from someone who closed their tab, clean up in background and ignore
+        deleteDoc(d.ref).catch(() => {});
+        continue;
+      }
+
+      return data;
     }
     return null;
   } catch (error) {
@@ -331,7 +342,7 @@ export async function updateMatchRoomState(
   }
 }
 
-// Leave or cancel match room
+// Leave or cancel match room (ONLY marks abandoned if actively playing, deletes if waiting)
 export async function leaveOrCancelMatchRoom(
   roomId: string,
   playerId: string
@@ -345,7 +356,7 @@ export async function leaveOrCancelMatchRoom(
     const data = snap.data() as MatchRoomData;
     if (data.status === 'waiting' && data.hostId === playerId) {
       await deleteDoc(docRef);
-    } else if (data.status === 'playing' || data.status === 'starting') {
+    } else if (data.status === 'playing') {
       await updateDoc(docRef, {
         status: 'abandoned',
         updatedAt: new Date().toISOString(),

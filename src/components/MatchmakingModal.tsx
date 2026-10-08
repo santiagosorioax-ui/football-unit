@@ -20,6 +20,7 @@ import {
   joinMatchRoom,
   listenToMatchRoom,
   leaveOrCancelMatchRoom,
+  updateMatchRoomState,
   MatchRoomData,
 } from '../lib/firebase';
 import { TeamCustomization } from '../types/game';
@@ -61,17 +62,22 @@ export default function MatchmakingModal({
 
   const activeRoomIdRef = useRef<string | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
+  const isMatchConfirmedRef = useRef(false);
+  const heartbeatTimerRef = useRef<any>(null);
 
-  const playerId =
-    currentUser?.uid ||
-    (typeof window !== 'undefined'
-      ? localStorage.getItem('fu_guest_id') ||
-        (() => {
-          const gid = 'guest_' + Math.random().toString(36).substring(2, 9);
-          localStorage.setItem('fu_guest_id', gid);
-          return gid;
-        })()
-      : 'guest_player');
+  // Per-tab unique session ID so multiple browser tabs don't collide when testing
+  const [playerId] = useState<string>(() => {
+    if (currentUser?.uid) return currentUser.uid;
+    if (typeof window !== 'undefined') {
+      let sId = sessionStorage.getItem('fu_session_player_id');
+      if (!sId) {
+        sId = 'player_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
+        sessionStorage.setItem('fu_session_player_id', sId);
+      }
+      return sId;
+    }
+    return 'player_' + Math.random().toString(36).substring(2, 6);
+  });
 
   const playerName =
     currentUser?.displayName || team.playerName || 'Jugador Real';
@@ -87,11 +93,27 @@ export default function MatchmakingModal({
     return () => clearInterval(timer);
   }, [isOpen, matchStatus]);
 
-  // Clean up previous room listener
+  // Clean up previous room listener (never marks abandoned if match was confirmed!)
   const cleanupRoom = async () => {
+    if (isMatchConfirmedRef.current) {
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+      if (heartbeatTimerRef.current) {
+        clearInterval(heartbeatTimerRef.current);
+        heartbeatTimerRef.current = null;
+      }
+      return;
+    }
+
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
       unsubscribeRef.current = null;
+    }
+    if (heartbeatTimerRef.current) {
+      clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
     }
     if (activeRoomIdRef.current) {
       try {
@@ -105,6 +127,7 @@ export default function MatchmakingModal({
 
   // Start public matchmaking
   const startPublicMatchmaking = async () => {
+    isMatchConfirmedRef.current = false;
     await cleanupRoom();
     setMatchStatus('searching');
     setSearchSeconds(0);
@@ -146,12 +169,21 @@ export default function MatchmakingModal({
         setCurrentRoom(created);
         activeRoomIdRef.current = created.id;
 
+        // Send periodic heartbeat to keep room fresh while waiting
+        heartbeatTimerRef.current = setInterval(() => {
+          if (activeRoomIdRef.current && !isMatchConfirmedRef.current) {
+            updateMatchRoomState(activeRoomIdRef.current, {
+              updatedAt: new Date().toISOString(),
+            }).catch(() => {});
+          }
+        }, 5000);
+
         // Listen for incoming guest player
         const unsub = listenToMatchRoom(created.id, (room) => {
           if (!room) return;
           setCurrentRoom(room);
 
-          if (room.guestId && room.status === 'starting' && !opponent) {
+          if (room.guestId && (room.status === 'starting' || room.status === 'playing') && !opponent) {
             setOpponent({
               name: room.guestName || 'Rival Online',
               teamName: room.guestTeam?.teamName || 'Rival FC',
@@ -224,10 +256,18 @@ export default function MatchmakingModal({
       activeRoomIdRef.current = created.id;
       setMatchStatus('searching');
 
+      heartbeatTimerRef.current = setInterval(() => {
+        if (activeRoomIdRef.current && !isMatchConfirmedRef.current) {
+          updateMatchRoomState(activeRoomIdRef.current, {
+            updatedAt: new Date().toISOString(),
+          }).catch(() => {});
+        }
+      }, 5000);
+
       const unsub = listenToMatchRoom(created.id, (room) => {
         if (!room) return;
         setCurrentRoom(room);
-        if (room.guestId && room.status === 'starting' && !opponent) {
+        if (room.guestId && (room.status === 'starting' || room.status === 'playing') && !opponent) {
           setOpponent({
             name: room.guestName || 'Rival Online',
             teamName: room.guestTeam?.teamName || 'Rival FC',
@@ -244,6 +284,11 @@ export default function MatchmakingModal({
   };
 
   const triggerMatchFound = (room: MatchRoomData, role: 'host' | 'guest') => {
+    isMatchConfirmedRef.current = true;
+    if (heartbeatTimerRef.current) {
+      clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
+    }
     setMatchStatus('found');
     sounds.playCheer();
     sounds.playWhistle();
@@ -257,6 +302,11 @@ export default function MatchmakingModal({
         sounds.playBounce();
       } else {
         clearInterval(interval);
+        if (unsubscribeRef.current) {
+          unsubscribeRef.current();
+          unsubscribeRef.current = null;
+        }
+        activeRoomIdRef.current = null;
         onMatchFound(room, role);
       }
     }, 1000);

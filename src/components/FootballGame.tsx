@@ -124,18 +124,36 @@ export default function FootballGame({
   useEffect(() => {
     if (mode !== 'multiplayer' || !multiplayerRoomId) return;
 
+    if (multiplayerRole === 'host') {
+      updateMatchRoomState(multiplayerRoomId, {
+        status: 'playing',
+        updatedAt: new Date().toISOString(),
+      }).catch((err) => console.warn('Error setting playing status:', err));
+    }
+
     const unsub = listenToMatchRoom(multiplayerRoomId, (data) => {
       if (!data) return;
-      if (data.status === 'abandoned') {
+      if (data.status === 'abandoned' && !gameOver) {
         setRivalAbandoned(true);
         sounds.playWhistle();
+      }
+
+      // Sync score from the other player
+      if (multiplayerRole === 'host') {
+        if (typeof data.scoreAway === 'number' && data.scoreAway > aiScoreRef.current) {
+          setAiScore(data.scoreAway);
+        }
+      } else {
+        if (typeof data.scoreHome === 'number' && data.scoreHome > aiScoreRef.current) {
+          setAiScore(data.scoreHome);
+        }
       }
     });
 
     return () => {
       unsub();
     };
-  }, [mode, multiplayerRoomId]);
+  }, [mode, multiplayerRoomId, gameOver, multiplayerRole]);
 
   // Active Training Drill State
   const [currentDrill, setCurrentDrill] = useState<string>(() => {
