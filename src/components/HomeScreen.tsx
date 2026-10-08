@@ -13,6 +13,8 @@ import {
   Bot,
   Globe2,
   Users,
+  Swords,
+  Zap,
 } from 'lucide-react';
 import { TeamCustomization, GlobalStats } from '../types/game';
 import { sounds } from '../utils/audio';
@@ -24,6 +26,7 @@ interface HomeScreenProps {
   unlockedAchievementsCount: number;
   totalAchievementsCount: number;
   unreadMailCount: number;
+  onlinePlayersCount?: number;
   currentUser?: User | null;
   soundEnabled?: boolean;
   onToggleSound?: () => void;
@@ -34,6 +37,15 @@ interface HomeScreenProps {
   onOpenShop: () => void;
   onOpenMailbox: () => void;
   onOpenAchievements: () => void;
+  onOpenOnlinePlayers?: () => void;
+  incomingChallenge?: {
+    challengerId: string;
+    challengerName: string;
+    challengerTeam: string;
+    roomId: string;
+  } | null;
+  onAcceptChallenge?: (challenge: any) => void;
+  onDeclineChallenge?: () => void;
   onOpenAuth?: () => void;
   onSignOut?: () => void;
 }
@@ -45,6 +57,7 @@ export default function HomeScreen({
   unlockedAchievementsCount,
   totalAchievementsCount,
   unreadMailCount,
+  onlinePlayersCount = 1,
   currentUser,
   onPlay,
   onPlayAI,
@@ -53,6 +66,10 @@ export default function HomeScreen({
   onOpenShop,
   onOpenMailbox,
   onOpenAchievements,
+  onOpenOnlinePlayers,
+  incomingChallenge,
+  onAcceptChallenge,
+  onDeclineChallenge,
   onOpenAuth,
   onSignOut,
 }: HomeScreenProps) {
@@ -122,6 +139,25 @@ export default function HomeScreen({
         </div>
 
         <div className="flex items-center gap-2.5">
+          {/* Online Players Button */}
+          {onOpenOnlinePlayers && (
+            <button
+              onClick={() => {
+                sounds.playBounce();
+                onOpenOnlinePlayers();
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/40 hover:bg-black/60 border border-emerald-400/50 text-emerald-300 font-bold text-xs shadow-md backdrop-blur-md transition-all active:scale-95 group"
+              title="Ver Jugadores en Línea y Desafíos 1v1"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+              <Users className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
+              <span className="hidden sm:inline uppercase">Online:</span>
+              <span className="px-1.5 py-0.2 rounded-full bg-emerald-400/20 text-emerald-300 font-black text-[11px]">
+                {onlinePlayersCount}
+              </span>
+            </button>
+          )}
+
           {/* Button to open Logros */}
           <button
             onClick={() => {
@@ -191,6 +227,49 @@ export default function HomeScreen({
           )}
         </div>
       </header>
+
+      {/* Floating Incoming Challenge Banner */}
+      {incomingChallenge && (
+        <div className="relative z-20 mx-4 sm:mx-8 mb-2 p-3 sm:p-4 rounded-2xl bg-gradient-to-r from-amber-500/90 via-orange-600/90 to-red-600/90 text-white shadow-[0_10px_30px_rgba(245,158,11,0.5)] border border-amber-300/60 backdrop-blur-md flex flex-col sm:flex-row items-center justify-between gap-3 animate-bounce">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-black/30 border border-white/30 flex items-center justify-center shrink-0">
+              <Swords className="w-5 h-5 text-amber-200" />
+            </div>
+            <div>
+              <span className="text-[10px] uppercase font-black tracking-wider text-amber-200 block">
+                ¡DESAFÍO 1v1 RECIBIDO!
+              </span>
+              <p className="text-xs sm:text-sm font-bold drop-shadow">
+                <strong>{incomingChallenge.challengerName}</strong> ({incomingChallenge.challengerTeam}) te desafía a un partido en vivo.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            {onAcceptChallenge && (
+              <button
+                onClick={() => {
+                  sounds.playWhistle();
+                  onAcceptChallenge(incomingChallenge);
+                }}
+                className="flex-1 sm:flex-initial px-4 py-2 rounded-xl bg-black text-amber-300 hover:bg-black/80 font-black text-xs uppercase tracking-wider shadow-md active:scale-95 transition-all whitespace-nowrap border border-amber-400/40"
+              >
+                ¡Aceptar Desafío!
+              </button>
+            )}
+            {onDeclineChallenge && (
+              <button
+                onClick={() => {
+                  sounds.playBounce();
+                  onDeclineChallenge();
+                }}
+                className="px-3 py-2 rounded-xl bg-black/40 hover:bg-black/60 text-white/80 font-bold text-xs uppercase transition-all"
+              >
+                Rechazar
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Main Content Area (Field Card on Left + Soccer Ball on Right) */}
       <main className="relative z-10 flex-1 flex flex-col md:flex-row items-center justify-around px-6 sm:px-12 pb-6 max-w-6xl mx-auto w-full">

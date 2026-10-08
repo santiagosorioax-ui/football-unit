@@ -28,7 +28,7 @@ import { sounds } from '../utils/audio';
 import { createSoccerBallTexture, createGrassTexture } from '../utils/textures';
 import { TeamCustomization } from '../types/game';
 import { getPlayerById } from '../data/players';
-import { listenToMatchRoom, updateMatchRoomState } from '../lib/firebase';
+import { listenToMatchRoom, updateMatchRoomState, MatchRoomData } from '../lib/firebase';
 
 export type GameDifficulty = 'easy' | 'normal' | 'hard';
 export type CameraMode = 'follow' | 'tv' | 'topDown';
@@ -120,6 +120,11 @@ export default function FootballGame({
   const [gameOver, setGameOver] = useState(false);
   const [rivalAbandoned, setRivalAbandoned] = useState(false);
 
+  // Multiplayer Real-time Sync Refs
+  const latestRoomDataRef = useRef<MatchRoomData | null>(null);
+  const lastMultiplayerSyncTimeRef = useRef(0);
+  const lastProcessedKickRef = useRef<string>('');
+
   // Multiplayer Room Listener
   useEffect(() => {
     if (mode !== 'multiplayer' || !multiplayerRoomId) return;
@@ -133,6 +138,8 @@ export default function FootballGame({
 
     const unsub = listenToMatchRoom(multiplayerRoomId, (data) => {
       if (!data) return;
+      latestRoomDataRef.current = data;
+
       if (data.status === 'abandoned' && !gameOver) {
         setRivalAbandoned(true);
         sounds.playWhistle();
@@ -2423,27 +2430,39 @@ export default function FootballGame({
 
     // Execute charged shot aiming towards 3D target point on pitch or monumental goal
     function executeAimShot(targetPoint: THREE.Vector3, power: number) {
-      const activeP = homePlayers[activePlayerIndexRef.current];
+      const isGuest = mode === 'multiplayer' && multiplayerRole === 'guest';
+      const activeP = isGuest ? awayPlayers[9] : homePlayers[activePlayerIndexRef.current];
       if (!activeP) return;
 
       const distToBall = activeP.group.position.distanceTo(ball.position);
       const hasPossession =
-        ballPossession && ballPossession.team === 'home' && ballPossession.index === activePlayerIndexRef.current;
+        ballPossession &&
+        ballPossession.team === (isGuest ? 'away' : 'home') &&
+        ballPossession.index === (isGuest ? 9 : activePlayerIndexRef.current);
 
       if (distToBall > 4.5 && !hasPossession) return;
 
       ballPossession = null;
       ballFreeTimer = 0.35;
-      lastTouchTeamRef.current = 'home';
+      lastTouchTeamRef.current = isGuest ? 'away' : 'home';
 
       const goalW = 32.0;
       let targetX = targetPoint.x;
       let targetZ = targetPoint.z;
 
-      // If clicked towards the rival goal half, aim inside the 32m monumental goalmouth
-      if (targetPoint.z < -fieldLength / 2 + 50) {
-        targetX = THREE.MathUtils.clamp(targetPoint.x, -goalW / 2 + 1.2, goalW / 2 - 1.2);
-        targetZ = -fieldLength / 2;
+      // If clicked towards the target goal half, aim inside the monumental goalmouth
+      if (isGuest) {
+        // Guest aims at South goal (z = fieldLength / 2)
+        if (targetPoint.z > fieldLength / 2 - 50) {
+          targetX = THREE.MathUtils.clamp(targetPoint.x, -goalW / 2 + 1.2, goalW / 2 - 1.2);
+          targetZ = fieldLength / 2;
+        }
+      } else {
+        // Host aims at North goal (z = -fieldLength / 2)
+        if (targetPoint.z < -fieldLength / 2 + 50) {
+          targetX = THREE.MathUtils.clamp(targetPoint.x, -goalW / 2 + 1.2, goalW / 2 - 1.2);
+          targetZ = -fieldLength / 2;
+        }
       }
 
       // "si es muy fuerte el balón se levanta un poco"
@@ -2467,6 +2486,17 @@ export default function FootballGame({
       if (power > 0.75) sounds.playCrowdGasp();
 
       activeP.group.rotation.y = Math.atan2(targetX - activeP.group.position.x, targetZ - activeP.group.position.z) + Math.PI;
+
+      if (mode === 'multiplayer' && multiplayerRoomId) {
+        updateMatchRoomState(multiplayerRoomId, {
+          lastKickBy: isGuest ? 'guest' : 'host',
+          lastKickVelocity: {
+            x: Number(ballVelocity.x.toFixed(2)),
+            y: Number(ballVelocity.y.toFixed(2)),
+            z: Number(ballVelocity.z.toFixed(2)),
+          },
+        }).catch(() => {});
+      }
     }
 
     // Execute charged pass aiming towards 3D target point on pitch or teammate
@@ -3004,37 +3034,41 @@ export default function FootballGame({
         aimIndicatorGroup.visible = false;
       }
 
-      // Live match auto-switch with anti-flutter hysteresis
-      let closestHomeDist = Infinity;
-      let closestHomeIdx = activePlayerIndexRef.current;
-      homePlayers.forEach((p, idx) => {
-        if (p.isGoalkeeper) return;
-        const d = p.group.position.distanceTo(ball.position);
-        if (d < closestHomeDist) {
-          closestHomeDist = d;
-          closestHomeIdx = idx;
+      // Live match auto-switch with anti-flutter hysteresis (Host and single-player only)
+      const isGuest = mode === 'multiplayer' && multiplayerRole === 'guest';
+      if (!isGuest) {
+        let closestHomeDist = Infinity;
+        let closestHomeIdx = activePlayerIndexRef.current;
+        homePlayers.forEach((p, idx) => {
+          if (p.isGoalkeeper) return;
+          const d = p.group.position.distanceTo(ball.position);
+          if (d < closestHomeDist) {
+            closestHomeDist = d;
+            closestHomeIdx = idx;
+          }
+        });
+
+        const currentActiveDist =
+          homePlayers[activePlayerIndexRef.current]?.group.position.distanceTo(ball.position) ?? Infinity;
+
+        if (
+          closestHomeIdx !== activePlayerIndexRef.current &&
+          (ballPossession?.team === 'home' || closestHomeDist < currentActiveDist - 3.8)
+        ) {
+          setActivePlayerIndex(closestHomeIdx);
+          activePlayerIndexRef.current = closestHomeIdx;
         }
-      });
-
-      const currentActiveDist =
-        homePlayers[activePlayerIndexRef.current]?.group.position.distanceTo(ball.position) ?? Infinity;
-
-      if (
-        closestHomeIdx !== activePlayerIndexRef.current &&
-        (ballPossession?.team === 'home' || closestHomeDist < currentActiveDist - 3.8)
-      ) {
-        setActivePlayerIndex(closestHomeIdx);
-        activePlayerIndexRef.current = closestHomeIdx;
       }
 
-      // 1. ACTIVE PLAYER MOVEMENT (User Keys: D: delante, A: atrás, W: izquierda, S: derecha)
-      const activeP = homePlayers[activePlayerIndexRef.current];
+      // 1. ACTIVE PLAYER MOVEMENT (User Keys)
+      // Host controls Home player, Guest controls Away star player
+      const activeP = isGuest ? awayPlayers[9] : homePlayers[activePlayerIndexRef.current];
       const isSprinting = actionTriggersRef.current.sprint || keys['ShiftLeft'] || keys['ShiftRight'];
       const playerSpeed = isSprinting ? 0.48 : 0.31;
 
       if (activeP.tackleTimer > 0) {
         activeP.tackleTimer -= delta;
-        activeP.group.position.z -= delta * 10;
+        activeP.group.position.z -= delta * (isGuest ? -10 : 10);
         activeP.torso.rotation.x = Math.PI / 2.5;
         activeP.leftLeg.rotation.x = Math.PI / 3;
       } else {
@@ -3042,14 +3076,22 @@ export default function FootballGame({
       }
 
       const moveVec = new THREE.Vector3(0, 0, 0);
-      if (keys['KeyD'] || keys['ArrowUp']) moveVec.z -= 1;
-      if (keys['KeyA'] || keys['ArrowDown']) moveVec.z += 1;
-      if (keys['KeyW'] || keys['ArrowLeft']) moveVec.x -= 1;
-      if (keys['KeyS'] || keys['ArrowRight']) moveVec.x += 1;
+      if (isGuest) {
+        // Guest moves: forward towards South (+Z)
+        if (keys['KeyD'] || keys['ArrowRight']) moveVec.x += 1;
+        if (keys['KeyA'] || keys['ArrowLeft']) moveVec.x -= 1;
+        if (keys['KeyW'] || keys['ArrowUp']) moveVec.z += 1;
+        if (keys['KeyS'] || keys['ArrowDown']) moveVec.z -= 1;
+      } else {
+        if (keys['KeyD'] || keys['ArrowUp']) moveVec.z -= 1;
+        if (keys['KeyA'] || keys['ArrowDown']) moveVec.z += 1;
+        if (keys['KeyW'] || keys['ArrowLeft']) moveVec.x -= 1;
+        if (keys['KeyS'] || keys['ArrowRight']) moveVec.x += 1;
+      }
 
       if (virtualInputRef.current.x !== 0 || virtualInputRef.current.z !== 0) {
-        moveVec.x += virtualInputRef.current.x;
-        moveVec.z += virtualInputRef.current.z;
+        moveVec.x += isGuest ? -virtualInputRef.current.x : virtualInputRef.current.x;
+        moveVec.z += isGuest ? -virtualInputRef.current.z : virtualInputRef.current.z;
       }
 
       if (moveVec.lengthSq() > 0 && activeP.tackleTimer <= 0) {
@@ -3076,18 +3118,135 @@ export default function FootballGame({
       if (actionTriggersRef.current.kick) {
         const distToBall = activeP.group.position.distanceTo(ball.position);
         const hasPossession =
-          ballPossession && ballPossession.team === 'home' && ballPossession.index === activePlayerIndexRef.current;
+          ballPossession &&
+          ballPossession.team === (isGuest ? 'away' : 'home') &&
+          ballPossession.index === (isGuest ? 9 : activePlayerIndexRef.current);
 
         if (distToBall < 3.5 || hasPossession) {
           ballPossession = null;
           ballFreeTimer = 0.35;
-          lastTouchTeamRef.current = 'home';
-          const targetZ = -fieldLength / 2;
+          lastTouchTeamRef.current = isGuest ? 'away' : 'home';
+          const targetZ = isGuest ? fieldLength / 2 : -fieldLength / 2;
           const shotTargetX = (Math.random() - 0.5) * 14;
           const shotDir = new THREE.Vector3(shotTargetX - ball.position.x, 3.4, targetZ - ball.position.z).normalize();
           ballVelocity.copy(shotDir.multiplyScalar(1.2));
           sounds.playKick();
           actionTriggersRef.current.kick = false;
+
+          if (mode === 'multiplayer' && multiplayerRoomId) {
+            updateMatchRoomState(multiplayerRoomId, {
+              lastKickBy: isGuest ? 'guest' : 'host',
+              lastKickVelocity: {
+                x: Number(ballVelocity.x.toFixed(2)),
+                y: Number(ballVelocity.y.toFixed(2)),
+                z: Number(ballVelocity.z.toFixed(2)),
+              },
+            }).catch(() => {});
+          }
+        }
+      }
+
+      // --- REAL-TIME MULTIPLAYER STATE SYNC (THROTTLED & INTERPOLATED) ---
+      if (mode === 'multiplayer' && multiplayerRoomId) {
+        const now = performance.now();
+        if (now - lastMultiplayerSyncTimeRef.current > 90) {
+          lastMultiplayerSyncTimeRef.current = now;
+          if (multiplayerRole === 'host') {
+            updateMatchRoomState(multiplayerRoomId, {
+              hostPlayerPos: {
+                x: Number(activeP.group.position.x.toFixed(2)),
+                z: Number(activeP.group.position.z.toFixed(2)),
+                angle: Number(activeP.group.rotation.y.toFixed(2)),
+              },
+              ballPos: {
+                x: Number(ball.position.x.toFixed(2)),
+                y: Number(ball.position.y.toFixed(2)),
+                z: Number(ball.position.z.toFixed(2)),
+                vx: Number(ballVelocity.x.toFixed(2)),
+                vy: Number(ballVelocity.y.toFixed(2)),
+                vz: Number(ballVelocity.z.toFixed(2)),
+              },
+            }).catch(() => {});
+          } else {
+            // Guest sends their player position
+            updateMatchRoomState(multiplayerRoomId, {
+              guestPlayerPos: {
+                x: Number(activeP.group.position.x.toFixed(2)),
+                z: Number(activeP.group.position.z.toFixed(2)),
+                angle: Number(activeP.group.rotation.y.toFixed(2)),
+              },
+            }).catch(() => {});
+          }
+        }
+
+        // Receive network peer data
+        const room = latestRoomDataRef.current;
+        if (room) {
+          if (multiplayerRole === 'host') {
+            // Host receives Guest position -> moves awayPlayers[9]
+            if (room.guestPlayerPos) {
+              const gp = room.guestPlayerPos;
+              const targetG = new THREE.Vector3(gp.x, 0, gp.z);
+              awayPlayers[9].group.position.lerp(targetG, delta * 14);
+              if (typeof gp.angle === 'number') {
+                awayPlayers[9].group.rotation.y = THREE.MathUtils.lerp(
+                  awayPlayers[9].group.rotation.y,
+                  gp.angle,
+                  delta * 14
+                );
+              }
+              const gDist = awayPlayers[9].group.position.distanceTo(targetG);
+              if (gDist > 0.04) {
+                awayPlayers[9].walkCycle += delta * 12;
+                awayPlayers[9].leftLeg.rotation.x = Math.sin(awayPlayers[9].walkCycle) * 0.55;
+                awayPlayers[9].rightLeg.rotation.x = -Math.sin(awayPlayers[9].walkCycle) * 0.55;
+              }
+            }
+
+            // Apply Guest's kick to the ball
+            if (
+              room.lastKickBy === 'guest' &&
+              room.lastKickVelocity &&
+              room.updatedAt &&
+              room.updatedAt !== lastProcessedKickRef.current
+            ) {
+              lastProcessedKickRef.current = room.updatedAt;
+              ballPossession = null;
+              ballFreeTimer = 0.35;
+              lastTouchTeamRef.current = 'away';
+              ballVelocity.set(room.lastKickVelocity.x, room.lastKickVelocity.y, room.lastKickVelocity.z);
+              sounds.playKick();
+            }
+          } else {
+            // Guest receives Host position -> moves homePlayers[9]
+            if (room.hostPlayerPos) {
+              const hp = room.hostPlayerPos;
+              const targetH = new THREE.Vector3(hp.x, 0, hp.z);
+              const hostP = homePlayers[activePlayerIndexRef.current] || homePlayers[9];
+              hostP.group.position.lerp(targetH, delta * 14);
+              if (typeof hp.angle === 'number') {
+                hostP.group.rotation.y = THREE.MathUtils.lerp(
+                  hostP.group.rotation.y,
+                  hp.angle,
+                  delta * 14
+                );
+              }
+              const hDist = hostP.group.position.distanceTo(targetH);
+              if (hDist > 0.04) {
+                hostP.walkCycle += delta * 12;
+                hostP.leftLeg.rotation.x = Math.sin(hostP.walkCycle) * 0.55;
+                hostP.rightLeg.rotation.x = -Math.sin(hostP.walkCycle) * 0.55;
+              }
+            }
+
+            // Guest syncs ball from Host if Guest does not have possession
+            if (room.ballPos && (!ballPossession || ballPossession.team !== 'away')) {
+              ball.position.lerp(new THREE.Vector3(room.ballPos.x, room.ballPos.y, room.ballPos.z), delta * 15);
+              if (typeof room.ballPos.vx === 'number') {
+                ballVelocity.set(room.ballPos.vx, room.ballPos.vy || 0, room.ballPos.vz || 0);
+              }
+            }
+          }
         }
       }
 
@@ -3163,7 +3322,10 @@ export default function FootballGame({
       const isAttacking = ballZ < 25;
 
       homePlayers.forEach((p, idx) => {
-        if (idx === activePlayerIndexRef.current || p.isGoalkeeper) return;
+        if (p.isGoalkeeper) return;
+        if (idx === activePlayerIndexRef.current) return;
+        // In multiplayer, player 9 is controlled by the Host!
+        if (mode === 'multiplayer' && idx === 9) return;
 
         let targetX = p.baseX;
         let targetZ = p.baseZ;
@@ -3321,6 +3483,8 @@ export default function FootballGame({
 
       awayPlayers.forEach((p, idx) => {
         if (p.isGoalkeeper) return;
+        // In multiplayer mode, Away player 9 is directly controlled by the human Guest!
+        if (mode === 'multiplayer' && idx === 9) return;
 
         if (p.isKnockedDown) {
           p.knockdownTimer -= delta;
@@ -3543,30 +3707,39 @@ export default function FootballGame({
       const isInsideGoalX = Math.abs(ball.position.x) < goalWidth / 2;
 
       if (!goalCooldownRef.current) {
-        // Player scores in North goal (z < -fieldLength / 2)
+        // Goal in North goal (z < -fieldLength / 2) -> Home Team scores
         if (ball.position.z < -fieldLength / 2 && isInsideGoalX && ball.position.y < goalHeight && ball.position.y > 0) {
           ballPossession = null;
           ballFreeTimer = 3.5;
           goalCooldownRef.current = true;
-          setPlayerScore((s) => {
-            const next = s + 1;
-            if (mode === 'multiplayer' && multiplayerRoomId) {
-              const scoreField = multiplayerRole === 'host' ? 'scoreHome' : 'scoreAway';
-              updateMatchRoomState(multiplayerRoomId, {
-                [scoreField]: next,
-                lastGoalScoredBy: multiplayerRole === 'host' ? 'home' : 'away',
-                lastGoalTimestamp: Date.now(),
-              }).catch(() => {});
-            }
-            return next;
-          });
-          if (onGoalScored) onGoalScored();
-          setGoalAnnouncement({
-            scorer: 'player',
-            text: mode === 'training' ? '¡¡¡GOLAZO DE ENTRENAMIENTO!!! +10 MONEDAS 🪙' : '¡¡¡GOOOOL DEL EQUIPO!!!',
-          });
-          sounds.playGoalCelebration();
-          confetti({ particleCount: 180, spread: 90, origin: { y: 0.6 } });
+          const isGuest = mode === 'multiplayer' && multiplayerRole === 'guest';
+
+          if (!isGuest) {
+            // Home team (User / Host) scores!
+            setPlayerScore((s) => {
+              const next = s + 1;
+              if (mode === 'multiplayer' && multiplayerRoomId) {
+                updateMatchRoomState(multiplayerRoomId, {
+                  scoreHome: next,
+                  lastGoalScoredBy: 'home',
+                  lastGoalTimestamp: Date.now(),
+                }).catch(() => {});
+              }
+              return next;
+            });
+            if (onGoalScored) onGoalScored();
+            setGoalAnnouncement({
+              scorer: 'player',
+              text: mode === 'training' ? '¡¡¡GOLAZO DE ENTRENAMIENTO!!! +10 MONEDAS 🪙' : '¡¡¡GOOOOL DEL EQUIPO!!!',
+            });
+            sounds.playGoalCelebration();
+            confetti({ particleCount: 180, spread: 90, origin: { y: 0.6 } });
+          } else {
+            // Guest sees Host score
+            setAiScore((s) => s + 1);
+            setGoalAnnouncement({ scorer: 'ai', text: `¡GOL DE ${opponentName || 'RIVAL ONLINE'}!` });
+            sounds.playGoalCelebration();
+          }
 
           if (mode === 'training') {
             triggerTrainingSuccess('¡Golazo anotado en el entrenamiento!');
@@ -3578,14 +3751,49 @@ export default function FootballGame({
             goalCooldownRef.current = false;
           }, 3500);
         }
-        // AI Rival scores in South goal (z > fieldLength / 2)
+        // Goal in South goal (z > fieldLength / 2) -> Away Team scores
         else if (ball.position.z > fieldLength / 2 && isInsideGoalX && ball.position.y < goalHeight && ball.position.y > 0) {
           ballPossession = null;
           ballFreeTimer = 3.5;
           goalCooldownRef.current = true;
-          setAiScore((s) => s + 1);
-          setGoalAnnouncement({ scorer: 'ai', text: '¡GOL DEL RIVAL!' });
-          sounds.playGoalCelebration();
+          const isGuest = mode === 'multiplayer' && multiplayerRole === 'guest';
+
+          if (isGuest) {
+            // Guest (Away team) scores!
+            setPlayerScore((s) => {
+              const next = s + 1;
+              if (mode === 'multiplayer' && multiplayerRoomId) {
+                updateMatchRoomState(multiplayerRoomId, {
+                  scoreAway: next,
+                  lastGoalScoredBy: 'away',
+                  lastGoalTimestamp: Date.now(),
+                }).catch(() => {});
+              }
+              return next;
+            });
+            if (onGoalScored) onGoalScored();
+            setGoalAnnouncement({
+              scorer: 'player',
+              text: '¡¡¡GOOOOLAZO DEL VISITANTE!!!',
+            });
+            sounds.playGoalCelebration();
+            confetti({ particleCount: 180, spread: 90, origin: { y: 0.6 } });
+          } else {
+            // Host sees Guest/Away score
+            setAiScore((s) => {
+              const next = s + 1;
+              if (mode === 'multiplayer' && multiplayerRoomId) {
+                updateMatchRoomState(multiplayerRoomId, {
+                  scoreAway: next,
+                  lastGoalScoredBy: 'away',
+                  lastGoalTimestamp: Date.now(),
+                }).catch(() => {});
+              }
+              return next;
+            });
+            setGoalAnnouncement({ scorer: 'ai', text: mode === 'multiplayer' ? `¡GOL DE ${opponentName || 'RIVAL ONLINE'}!` : '¡GOL DEL RIVAL!' });
+            sounds.playGoalCelebration();
+          }
 
           setTimeout(() => {
             setGoalAnnouncement(null);

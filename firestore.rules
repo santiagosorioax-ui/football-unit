@@ -39,6 +39,13 @@ service cloud.firestore {
       allow delete: if isOwner(userId) && isValidId(userId);
     }
 
+    // Real-time online user presence (visible to all players)
+    match /presence/{userId} {
+      allow read: if true;
+      allow create, update: if isValidId(userId);
+      allow delete: if isValidId(userId);
+    }
+
     // Real-time online multiplayer match rooms
     match /matches/{matchId} {
       allow read: if true;

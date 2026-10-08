@@ -9,6 +9,12 @@ import {
   signOutUser,
   MatchRoomData,
   leaveOrCancelMatchRoom,
+  UserPresenceData,
+  updateUserPresence,
+  listenToOnlinePresence,
+  removeUserPresence,
+  sendDirectChallenge,
+  clearDirectChallenge,
 } from './lib/firebase';
 import AuthPromptScreen from './components/AuthPromptScreen';
 import LoadingScreen from './components/LoadingScreen';
@@ -21,6 +27,7 @@ import AchievementsModal from './components/AchievementsModal';
 import AchievementNotification from './components/AchievementNotification';
 import TrainingModal from './components/TrainingModal';
 import MatchmakingModal from './components/MatchmakingModal';
+import OnlinePlayersModal from './components/OnlinePlayersModal';
 import { AppScreen, MailboxMessage, TeamCustomization, GlobalStats, Achievement } from './types/game';
 import { ACHIEVEMENTS } from './data/achievements';
 import { STARTER_TEAM_PLAYER_IDS, PlayerData } from './data/players';
@@ -77,6 +84,28 @@ export default function App() {
   const [activeAchievementNotification, setActiveAchievementNotification] = useState<Achievement | null>(null);
   const achievementQueueRef = useRef<Achievement[]>([]);
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Per-session unique player ID for presence & multi-tab multiplayer
+  const [sessionPlayerId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      let sId = sessionStorage.getItem('fu_session_player_id');
+      if (!sId) {
+        sId = 'player_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
+        sessionStorage.setItem('fu_session_player_id', sId);
+      }
+      return sId;
+    }
+    return 'player_' + Math.random().toString(36).substring(2, 6);
+  });
+
+  const activeUserId = currentUser?.uid
+    ? `${currentUser.uid}_${sessionPlayerId.slice(-4)}`
+    : sessionPlayerId;
+
+  const [onlinePlayers, setOnlinePlayers] = useState<UserPresenceData[]>([]);
+  const [isOnlinePlayersOpen, setIsOnlinePlayersOpen] = useState(false);
+  const [directChallengeCode, setDirectChallengeCode] = useState<string | undefined>(undefined);
+  const [incomingChallenge, setIncomingChallenge] = useState<UserPresenceData['incomingChallenge'] | null>(null);
 
   // Persistent State
   const [team, setTeam] = useState<TeamCustomization>(() => {
@@ -210,6 +239,77 @@ export default function App() {
       }).catch((err) => console.error('Failed to sync to Firestore:', err));
     }
   }, [currentUser, coins, stats, team, unlockedPlayerIds, unlockedAchievementIds]);
+
+  // Real-time Online Presence & Challenge Listener
+  useEffect(() => {
+    const update = () => {
+      updateUserPresence({
+        userId: activeUserId,
+        displayName: currentUser?.displayName || team.playerName || 'Entrenador Real',
+        teamName: team.teamName,
+        jerseyColor: team.jerseyColor,
+        shortsColor: team.shortsColor,
+        playerNumber: team.playerNumber || 10,
+        status: screen === 'match' ? 'in_match' : isMatchmakingOpen ? 'matchmaking' : 'menu',
+      });
+    };
+
+    update();
+    const interval = setInterval(update, 12000);
+
+    const unsub = listenToOnlinePresence(activeUserId, (users) => {
+      setOnlinePlayers(users);
+      const me = users.find((u) => u.userId === activeUserId);
+      if (me?.incomingChallenge && Date.now() - me.incomingChallenge.timestamp < 35000) {
+        setIncomingChallenge(me.incomingChallenge);
+        sounds.playWhistle();
+      } else {
+        setIncomingChallenge(null);
+      }
+    });
+
+    const handleBeforeUnload = () => {
+      removeUserPresence(activeUserId);
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      clearInterval(interval);
+      unsub();
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      removeUserPresence(activeUserId);
+    };
+  }, [activeUserId, currentUser, team, screen, isMatchmakingOpen]);
+
+  // Challenge Handlers
+  const handleChallengePlayer = async (target: UserPresenceData) => {
+    sounds.playKick();
+    const challengeRoomCode = 'VS' + Math.floor(1000 + Math.random() * 9000);
+    await sendDirectChallenge(target.userId, {
+      challengerId: activeUserId,
+      challengerName: currentUser?.displayName || team.playerName || 'Jugador Real',
+      challengerTeam: team.teamName,
+      roomId: challengeRoomCode,
+    });
+    setDirectChallengeCode(challengeRoomCode);
+    setIsOnlinePlayersOpen(false);
+    setIsMatchmakingOpen(true);
+  };
+
+  const handleAcceptChallenge = async (challenge: NonNullable<UserPresenceData['incomingChallenge']>) => {
+    sounds.playWhistle();
+    await clearDirectChallenge(activeUserId);
+    setIncomingChallenge(null);
+    setIsOnlinePlayersOpen(false);
+    setDirectChallengeCode(challenge.roomId);
+    setIsMatchmakingOpen(true);
+  };
+
+  const handleDeclineChallenge = async () => {
+    sounds.playBounce();
+    await clearDirectChallenge(activeUserId);
+    setIncomingChallenge(null);
+  };
 
   // Audio Sync
   const toggleSound = () => {
@@ -518,10 +618,12 @@ export default function App() {
           unlockedAchievementsCount={unlockedAchievementIds.length}
           totalAchievementsCount={ACHIEVEMENTS.length}
           unreadMailCount={unreadMailCount}
+          onlinePlayersCount={onlinePlayers.length || 1}
           currentUser={currentUser}
           onOpenAuth={() => setScreen('auth')}
           onSignOut={handleSignOut}
           onPlay={() => {
+            setDirectChallengeCode(undefined);
             setIsMatchmakingOpen(true);
           }}
           onPlayAI={handlePlayAI}
@@ -532,6 +634,10 @@ export default function App() {
           onOpenShop={() => setIsShopOpen(true)}
           onOpenMailbox={() => setIsMailboxOpen(true)}
           onOpenAchievements={() => setIsAchievementsOpen(true)}
+          onOpenOnlinePlayers={() => setIsOnlinePlayersOpen(true)}
+          incomingChallenge={incomingChallenge}
+          onAcceptChallenge={handleAcceptChallenge}
+          onDeclineChallenge={handleDeclineChallenge}
         />
       )}
 
@@ -581,11 +687,31 @@ export default function App() {
       {/* Matchmaking Modal for Online Multiplayer */}
       <MatchmakingModal
         isOpen={isMatchmakingOpen}
-        onClose={() => setIsMatchmakingOpen(false)}
+        onClose={() => {
+          setIsMatchmakingOpen(false);
+          setDirectChallengeCode(undefined);
+        }}
         team={team}
         currentUser={currentUser}
+        initialCode={directChallengeCode}
         onPlayAI={handlePlayAI}
         onMatchFound={handleMatchFound}
+      />
+
+      {/* Online Players & Direct Challenge Modal */}
+      <OnlinePlayersModal
+        isOpen={isOnlinePlayersOpen}
+        onClose={() => setIsOnlinePlayersOpen(false)}
+        onlinePlayers={onlinePlayers}
+        currentUserId={activeUserId}
+        onChallengePlayer={handleChallengePlayer}
+        onAcceptChallenge={handleAcceptChallenge}
+        incomingChallenge={incomingChallenge}
+        onPlayQuickMatch={() => {
+          setDirectChallengeCode(undefined);
+          setIsOnlinePlayersOpen(false);
+          setIsMatchmakingOpen(true);
+        }}
       />
 
       {/* Training Modal */}

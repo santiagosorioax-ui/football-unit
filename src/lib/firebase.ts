@@ -213,6 +213,117 @@ export async function loadUserDataFromFirestore(
 }
 
 // ==========================================
+// REAL-TIME USER PRESENCE FUNCTIONS
+// ==========================================
+
+export interface UserPresenceData {
+  userId: string;
+  displayName: string;
+  teamName: string;
+  jerseyColor: string;
+  shortsColor: string;
+  playerNumber: number;
+  status: 'menu' | 'matchmaking' | 'in_match';
+  lastSeen: string;
+  incomingChallenge?: {
+    challengerId: string;
+    challengerName: string;
+    challengerTeam: string;
+    roomId: string;
+    timestamp: number;
+  } | null;
+}
+
+export async function updateUserPresence(
+  presence: Partial<UserPresenceData> & { userId: string }
+): Promise<void> {
+  const cleanId = presence.userId.replace(/[^A-Za-z0-9_-]/g, '').trim();
+  if (!cleanId) return;
+  try {
+    const sanitized = sanitizeForFirestore({
+      ...presence,
+      userId: cleanId,
+      lastSeen: new Date().toISOString(),
+    });
+    await setDoc(doc(db, 'presence', cleanId), sanitized, { merge: true });
+  } catch (err) {
+    console.warn('Failed to update user presence beacon:', err);
+  }
+}
+
+export function listenToOnlinePresence(
+  currentUserId: string,
+  onUpdate: (users: UserPresenceData[]) => void
+): Unsubscribe {
+  const colRef = collection(db, 'presence');
+  return onSnapshot(
+    colRef,
+    (snap) => {
+      const now = Date.now();
+      const online: UserPresenceData[] = [];
+      snap.forEach((d) => {
+        const data = d.data() as UserPresenceData;
+        if (!data || !data.userId) return;
+        const time = new Date(data.lastSeen).getTime();
+        // Online if seen in last 45 seconds
+        if (!isNaN(time) && now - time < 45000) {
+          online.push(data);
+        }
+      });
+      onUpdate(online);
+    },
+    (err) => {
+      console.warn('Warning listening to online presence:', err);
+    }
+  );
+}
+
+export async function removeUserPresence(userId: string): Promise<void> {
+  const cleanId = userId.replace(/[^A-Za-z0-9_-]/g, '').trim();
+  if (!cleanId) return;
+  try {
+    await deleteDoc(doc(db, 'presence', cleanId));
+  } catch (err) {
+    console.warn('Failed to remove user presence:', err);
+  }
+}
+
+export async function sendDirectChallenge(
+  targetUserId: string,
+  challenge: {
+    challengerId: string;
+    challengerName: string;
+    challengerTeam: string;
+    roomId: string;
+  }
+): Promise<void> {
+  const cleanId = targetUserId.replace(/[^A-Za-z0-9_-]/g, '').trim();
+  if (!cleanId) return;
+  try {
+    await updateDoc(doc(db, 'presence', cleanId), {
+      incomingChallenge: {
+        ...challenge,
+        timestamp: Date.now(),
+      },
+    });
+  } catch (err) {
+    console.warn('Failed to send challenge:', err);
+  }
+}
+
+export async function clearDirectChallenge(userId: string): Promise<void> {
+  const cleanId = userId.replace(/[^A-Za-z0-9_-]/g, '').trim();
+  if (!cleanId) return;
+  try {
+    await updateDoc(doc(db, 'presence', cleanId), {
+      incomingChallenge: null,
+    });
+  } catch (err) {
+    console.warn('Failed to clear challenge:', err);
+  }
+}
+
+// ==========================================
 // REAL-TIME MULTIPLAYER MATCH FUNCTIONS
 // ==========================================
 
@@ -229,9 +340,30 @@ export interface MatchRoomData {
   scoreAway: number;
   period?: string;
   timeRemaining?: number;
-  ballPos?: { x: number; y: number; z: number };
-  hostPlayerPos?: { x: number; z: number; angle?: number; action?: string };
-  guestPlayerPos?: { x: number; z: number; angle?: number; action?: string };
+  ballPos?: {
+    x: number;
+    y: number;
+    z: number;
+    vx?: number;
+    vy?: number;
+    vz?: number;
+  };
+  hostPlayerPos?: {
+    x: number;
+    z: number;
+    angle?: number;
+    action?: string;
+    number?: number;
+  };
+  guestPlayerPos?: {
+    x: number;
+    z: number;
+    angle?: number;
+    action?: string;
+    number?: number;
+  };
+  lastKickBy?: 'host' | 'guest' | null;
+  lastKickVelocity?: { x: number; y: number; z: number } | null;
   lastGoalScoredBy?: 'home' | 'away' | null;
   lastGoalTimestamp?: number;
   winner?: 'home' | 'away' | 'tie' | null;
@@ -239,12 +371,20 @@ export interface MatchRoomData {
   updatedAt: string;
 }
 
+function cleanRoomId(id: string): string {
+  const stripped = id.replace(/[^A-Za-z0-9_-]/g, '').trim();
+  if (stripped.startsWith('match_')) {
+    return stripped;
+  }
+  return stripped.toUpperCase();
+}
+
 // Create a new match room (Host)
 export async function createMatchRoom(
   hostPlayer: { id: string; name: string; team: TeamCustomization },
   customCode?: string
 ): Promise<MatchRoomData> {
-  const cleanCode = customCode ? customCode.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().trim() : '';
+  const cleanCode = customCode ? cleanRoomId(customCode) : '';
   const roomId = cleanCode
     ? cleanCode
     : 'match_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 6);
@@ -316,7 +456,7 @@ export async function joinMatchRoom(
   roomId: string,
   guestPlayer: { id: string; name: string; team: TeamCustomization }
 ): Promise<MatchRoomData> {
-  const cleanId = roomId.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().trim();
+  const cleanId = cleanRoomId(roomId);
   const path = `matches/${cleanId}`;
   try {
     const docRef = doc(db, 'matches', cleanId);
@@ -352,7 +492,7 @@ export function listenToMatchRoom(
   roomId: string,
   onUpdate: (data: MatchRoomData | null) => void
 ): Unsubscribe {
-  const cleanId = roomId.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().trim();
+  const cleanId = cleanRoomId(roomId);
   const path = `matches/${cleanId}`;
   const docRef = doc(db, 'matches', cleanId);
 
@@ -376,7 +516,7 @@ export async function updateMatchRoomState(
   roomId: string,
   updates: Partial<MatchRoomData>
 ): Promise<void> {
-  const cleanId = roomId.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().trim();
+  const cleanId = cleanRoomId(roomId);
   const path = `matches/${cleanId}`;
   try {
     const sanitized = sanitizeForFirestore({
@@ -394,7 +534,7 @@ export async function leaveOrCancelMatchRoom(
   roomId: string,
   playerId: string
 ): Promise<void> {
-  const cleanId = roomId.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().trim();
+  const cleanId = cleanRoomId(roomId);
   const path = `matches/${cleanId}`;
   try {
     const docRef = doc(db, 'matches', cleanId);

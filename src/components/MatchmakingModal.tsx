@@ -33,6 +33,7 @@ interface MatchmakingModalProps {
   onClose: () => void;
   team: TeamCustomization;
   currentUser: User | null;
+  initialCode?: string;
   onPlayAI: () => void;
   onMatchFound: (roomData: MatchRoomData, role: 'host' | 'guest') => void;
 }
@@ -42,6 +43,7 @@ export default function MatchmakingModal({
   onClose,
   team,
   currentUser,
+  initialCode,
   onPlayAI,
   onMatchFound,
 }: MatchmakingModalProps) {
@@ -355,17 +357,104 @@ export default function MatchmakingModal({
     }
   };
 
+  // Handle direct challenge room code (auto-join if exists or auto-create as host)
+  const handleDirectRoomCode = async (targetCode: string) => {
+    const cleanCode = targetCode.replace(/[^A-Za-z0-9_-]/g, '').toUpperCase().trim();
+    if (!cleanCode) return;
+    await cleanupRoom();
+    setMatchStatus('searching');
+    setSearchSeconds(0);
+    setErrorMessage(null);
+    setOpponent(null);
+
+    try {
+      // 1. Try to join room as guest if host created it
+      const joined = await joinMatchRoom(cleanCode, {
+        id: playerId,
+        name: playerName,
+        team,
+      });
+      setUserRole('guest');
+      activeRoomIdRef.current = cleanCode;
+      setCurrentRoom(joined);
+
+      setOpponent({
+        name: joined.hostName || 'Rival Online',
+        teamName: joined.hostTeam?.teamName || 'Rival FC',
+        jerseyColor: joined.hostTeam?.jerseyColor || '#ef4444',
+        shortsColor: joined.hostTeam?.shortsColor || '#18181b',
+      });
+
+      const unsub = listenToMatchRoom(cleanCode, (room) => {
+        if (!room) return;
+        setCurrentRoom(room);
+      });
+      unsubscribeRef.current = unsub;
+
+      triggerMatchFound(joined, 'guest');
+    } catch {
+      // 2. Room doesn't exist yet, so we become the host of this code!
+      try {
+        setUserRole('host');
+        const created = await createMatchRoom(
+          {
+            id: playerId,
+            name: playerName,
+            team,
+          },
+          cleanCode
+        );
+        setCurrentRoom(created);
+        activeRoomIdRef.current = created.id;
+
+        heartbeatTimerRef.current = setInterval(() => {
+          if (activeRoomIdRef.current && !isMatchConfirmedRef.current) {
+            updateMatchRoomState(activeRoomIdRef.current, {
+              updatedAt: new Date().toISOString(),
+            }).catch(() => {});
+          }
+        }, 4000);
+
+        const unsub = listenToMatchRoom(created.id, (room) => {
+          if (!room) return;
+          setCurrentRoom(room);
+          if (
+            room.guestId &&
+            (room.status === 'starting' || room.status === 'playing') &&
+            !isMatchConfirmedRef.current
+          ) {
+            setOpponent({
+              name: room.guestName || 'Rival Online',
+              teamName: room.guestTeam?.teamName || 'Rival FC',
+              jerseyColor: room.guestTeam?.jerseyColor || '#ef4444',
+              shortsColor: room.guestTeam?.shortsColor || '#18181b',
+            });
+            triggerMatchFound(room, 'host');
+          }
+        });
+        unsubscribeRef.current = unsub;
+      } catch (err: any) {
+        setErrorMessage(getReadableErrorMessage(err));
+        setMatchStatus('error');
+      }
+    }
+  };
+
   // Launch on open
   useEffect(() => {
     if (isOpen) {
-      startPublicMatchmaking();
+      if (initialCode) {
+        handleDirectRoomCode(initialCode);
+      } else {
+        startPublicMatchmaking();
+      }
     } else {
       cleanupRoom();
     }
     return () => {
       cleanupRoom();
     };
-  }, [isOpen]);
+  }, [isOpen, initialCode]);
 
   if (!isOpen) return null;
 

@@ -59,40 +59,87 @@
         },
         "jerseyColor": {
           "type": "string",
-          "description": "Primary jersey color hex code"
+          "description": "Hex color code for the team jersey"
         },
         "shortsColor": {
           "type": "string",
-          "description": "Shorts color hex code"
+          "description": "Hex color code for the team shorts"
         },
         "rivalColor": {
           "type": "string",
-          "description": "Opponent jersey color hex code"
+          "description": "Hex color code for rival team jersey"
         },
-        "ballStyle": {
-          "type": "string",
-          "description": "Ball skin style"
+        "unlockedPlayerIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of unlocked special player IDs"
+        },
+        "unlockedAchievementIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of unlocked achievement badges"
         },
         "updatedAt": {
           "type": "string",
-          "description": "Timestamp of last sync"
+          "description": "ISO timestamp of last save"
         }
       },
-      "required": ["userId"]
+      "required": ["userId", "coins"]
+    },
+    "UserPresence": {
+      "title": "UserPresence",
+      "description": "Real-time online presence beacon of connected players",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Unique identifier of the player session"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Player or manager display name"
+        },
+        "teamName": {
+          "type": "string",
+          "description": "Team club name"
+        },
+        "jerseyColor": {
+          "type": "string",
+          "description": "Primary jersey color hex"
+        },
+        "shortsColor": {
+          "type": "string",
+          "description": "Shorts color hex"
+        },
+        "playerNumber": {
+          "type": "number",
+          "description": "Captained shirt number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["menu", "matchmaking", "in_match"],
+          "description": "Current activity of the user in the app"
+        },
+        "lastSeen": {
+          "type": "string",
+          "description": "ISO timestamp of the most recent heartbeat"
+        }
+      },
+      "required": ["userId", "displayName", "lastSeen"]
     },
     "MatchRoom": {
       "title": "MatchRoom",
-      "description": "Real-time online multiplayer football match room between two real players",
+      "description": "Multiplayer 1v1 football match room session",
       "type": "object",
       "properties": {
         "id": {
           "type": "string",
-          "description": "Match room ID"
+          "description": "Unique room ID code (e.g., match_xxx or custom code)"
         },
         "status": {
           "type": "string",
           "enum": ["waiting", "starting", "playing", "finished", "abandoned"],
-          "description": "Current lifecycle status of the online match"
+          "description": "Current status of the match room"
         },
         "hostId": {
           "type": "string",
@@ -134,6 +181,10 @@
     "/users/{userId}": {
       "schema": "UserProfile",
       "description": "Private user game save and profile document accessible exclusively by the document owner"
+    },
+    "/presence/{userId}": {
+      "schema": "UserPresence",
+      "description": "Public real-time presence indicators of online players"
     },
     "/matches/{matchId}": {
       "schema": "MatchRoom",
